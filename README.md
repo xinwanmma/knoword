@@ -20,7 +20,7 @@
 | 后端 | FastAPI + SQLAlchemy (async) + Alembic |
 | 数据库 | PostgreSQL |
 | 向量库 | ChromaDB |
-| LLM | Ollama 本地模型 (qwen3:2b) |
+| LLM | Ollama 本地模型 (qwen3.5:2b) |
 | Embedding | Ollama 本地模型 (qwen3-embedding:0.6b) |
 | 前端 | Vue3 + Vite + Element Plus |
 | 认证 | JWT + bcrypt |
@@ -37,7 +37,7 @@
 ### 1. 拉取 Ollama 模型
 
 ```bash
-ollama pull qwen3:2b
+ollama pull qwen3.5:2b
 ollama pull qwen3-embedding:0.6b
 ```
 
@@ -209,7 +209,7 @@ npm run dev
 |------|--------|------|
 | `DATABASE_URL` | `postgresql+asyncpg://...` | 数据库连接 |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 地址 |
-| `OLLAMA_LLM_MODEL` | `qwen3:2b` | 对话模型 |
+| `OLLAMA_LLM_MODEL` | `qwen3.5:2b` | 对话模型 |
 | `OLLAMA_EMBED_MODEL` | `qwen3-embedding:0.6b` | 向量模型 |
 | `CHUNK_TARGET_TOKENS` | `300` | 目标分块大小 |
 | `CHUNK_MAX_TOKENS` | `512` | 最大分块大小 |
