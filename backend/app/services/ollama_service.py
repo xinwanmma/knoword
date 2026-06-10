@@ -124,14 +124,17 @@ async def chat_stream(
 
 
 async def check_ollama_model(model: str) -> bool:
-    """检查 Ollama 模型是否可用。"""
+    """通过 /api/tags 检查 Ollama 模型是否已安装。"""
     client = await _get_client()
     try:
-        response = await client.post(
-            "/api/embeddings",
-            json={"model": model, "prompt": "test"},
-            timeout=10.0,
+        response = await client.get("/api/tags", timeout=10.0)
+        response.raise_for_status()
+        data = response.json()
+        installed_models = [m.get("name", "") for m in data.get("models", [])]
+        return any(
+            model == m or model + ":latest" == m
+            for m in installed_models
         )
-        return response.status_code == 200
-    except Exception:
+    except Exception as e:
+        logger.warning(f"检查模型 {model} 安装状态失败: {e}")
         return False
