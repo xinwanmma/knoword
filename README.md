@@ -56,13 +56,20 @@ cd backend
 copy .env.example .env
 ```
 
-编辑 `.env`，确保数据库连接信息正确：
+编辑 `.env`，确保数据库连接信息正确，并**修改默认管理员密码**：
 
 ```
 DATABASE_URL=postgresql+asyncpg://rag_user:rag_password@localhost:5432/rag_kb
 DATABASE_URL_SYNC=postgresql://rag_user:rag_password@localhost:5432/rag_kb
 OLLAMA_BASE_URL=http://localhost:11434
+
+# 管理员账号（首次启动自动创建，之后忽略）
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your-secure-password
+ADMIN_EMAIL=admin@example.com
 ```
+
+> ⚠️ **首次启动**会自动创建默认管理员账号，日志中会打印用户名和密码。请务必在生产环境中修改密码。
 
 ### 4. 启动后端
 
@@ -209,6 +216,9 @@ npm run dev
 | `CHUNK_OVERLAP_SENTENCES` | `2` | 重叠句数 |
 | `MAX_UPLOAD_SIZE_MB` | `50` | 最大上传文件大小 |
 | `JWT_SECRET_KEY` | — | JWT 密钥（必须修改） |
+| `ADMIN_USERNAME` | `admin` | 默认管理员用户名 |
+| `ADMIN_PASSWORD` | `admin123456` | 默认管理员密码（必须修改） |
+| `ADMIN_EMAIL` | `admin@example.com` | 默认管理员邮箱 |
 
 ## 🔧 常见问题
 

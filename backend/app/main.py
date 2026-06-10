@@ -20,11 +20,56 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _create_default_admin():
+    """首次启动时自动创建默认管理员账号。"""
+    from sqlalchemy import select
+    from app.db.database import async_session_factory
+    from app.models.models import User
+    from app.core.security import hash_password
+
+    async with async_session_factory() as db:
+        # 检查是否已有管理员
+        result = await db.execute(select(User).where(User.is_admin == True))
+        if result.scalar_one_or_none() is not None:
+            logger.info("管理员账号已存在，跳过初始化")
+            return
+
+        # 检查用户名是否被占用
+        result = await db.execute(
+            select(User).where(User.username == settings.ADMIN_USERNAME)
+        )
+        if result.scalar_one_or_none() is not None:
+            logger.warning(
+                f"用户名 '{settings.ADMIN_USERNAME}' 已被占用，"
+                f"请手动将该用户设为管理员或修改 ADMIN_USERNAME"
+            )
+            return
+
+        # 创建管理员
+        admin = User(
+            username=settings.ADMIN_USERNAME,
+            email=settings.ADMIN_EMAIL,
+            hashed_password=hash_password(settings.ADMIN_PASSWORD),
+            is_admin=True,
+        )
+        db.add(admin)
+        await db.commit()
+        logger.info(
+            f"✅ 默认管理员已创建: "
+            f"用户名={settings.ADMIN_USERNAME}, "
+            f"密码={settings.ADMIN_PASSWORD}"
+        )
+        logger.info(
+            "⚠️  请在生产环境中修改默认管理员密码！"
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化数据库，关闭时清理资源。"""
     logger.info("🚀 正在启动 RAG 知识库系统...")
     await init_db()
+    await _create_default_admin()
     logger.info("✅ 数据库初始化完成")
     yield
     logger.info("🔄 正在关闭...")

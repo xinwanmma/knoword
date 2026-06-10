@@ -51,6 +51,11 @@ class Settings:
         ".xlsx", ".pptx", ".csv", ".json", ".html",
     ]
 
+    # --- 默认管理员（首次启动自动创建） ---
+    ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin")
+    ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123456")
+    ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "admin@example.com")
+
     # --- 应用 ---
     APP_NAME: str = "RAG 知识库系统"
     APP_VERSION: str = "0.1.0"

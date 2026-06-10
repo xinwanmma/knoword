@@ -158,3 +158,9 @@ export const chatAPI = {
 export const healthAPI = {
   check: () => api.get('/health'),
 }
+
+// 管理员
+export const adminAPI = {
+  listUsers: () => api.get('/auth/admin/users'),
+  toggleAdmin: (userId) => api.put(`/auth/admin/users/${userId}/toggle-admin`),
+}

@@ -65,3 +65,52 @@ async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
 async def get_me(current_user: User = Depends(get_current_user)):
     """获取当前用户信息。"""
     return UserOut.model_validate(current_user)
+
+
+# ==================== 管理员用户管理 ====================
+
+from app.core.security import require_admin
+from sqlalchemy import func
+
+
+@router.get("/admin/users", response_model=list[UserOut])
+async def list_users(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """管理员：获取所有用户列表。"""
+    result = await db.execute(
+        select(User).order_by(User.created_at.desc())
+    )
+    users = result.scalars().all()
+    return [UserOut.model_validate(u) for u in users]
+
+
+@router.put("/admin/users/{user_id}/toggle-admin")
+async def toggle_admin(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """管理员：切换用户的管理员状态。"""
+    import uuid as uuid_mod
+    try:
+        target_id = uuid_mod.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的用户 ID")
+
+    # 不能修改自己的管理员状态
+    if target_id == current_user.id:
+        raise HTTPException(status_code=400, detail="不能修改自己的管理员状态")
+
+    result = await db.execute(select(User).where(User.id == target_id))
+    target_user = result.scalar_one_or_none()
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    target_user.is_admin = not target_user.is_admin
+    await db.commit()
+    await db.refresh(target_user)
+
+    status_text = "管理员" if target_user.is_admin else "普通用户"
+    return {"message": f"已将 {target_user.username} 设为{status_text}", "is_admin": target_user.is_admin}

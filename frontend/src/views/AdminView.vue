@@ -25,6 +25,18 @@
               {{ formatDate(row.created_at) }}
             </template>
           </el-table-column>
+          <el-table-column label="操作" width="140">
+            <template #default="{ row }">
+              <el-button
+                size="small"
+                :type="row.is_admin ? 'info' : 'warning'"
+                text
+                @click="toggleAdmin(row)"
+              >
+                {{ row.is_admin ? '取消管理员' : '设为管理员' }}
+              </el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </el-tab-pane>
 
@@ -70,10 +82,10 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { kbAPI, categoryAPI, authAPI } from '../api'
+import { kbAPI, categoryAPI, adminAPI } from '../api'
 import api from '../api'
 import { Plus } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const activeTab = ref('users')
 const users = ref([])
@@ -88,12 +100,29 @@ onMounted(() => {
 
 async function loadAll() {
   try {
-    const [kbRes, catRes] = await Promise.all([
+    const [usersRes, kbRes, catRes] = await Promise.all([
+      adminAPI.listUsers(),
       kbAPI.list(),
       categoryAPI.list(),
     ])
+    users.value = usersRes.data
     categories.value = catRes.data
     stats.kbCount = kbRes.data.length
+    stats.userCount = usersRes.data.length
+  } catch { /* noop */ }
+}
+
+async function toggleAdmin(user) {
+  const action = user.is_admin ? '取消管理员' : '设为管理员'
+  try {
+    await ElMessageBox.confirm(
+      `确定将 ${user.username} ${action}？`,
+      '确认操作',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+    const { data } = await adminAPI.toggleAdmin(user.id)
+    ElMessage.success(data.message)
+    await loadAll()
   } catch { /* noop */ }
 }
 
