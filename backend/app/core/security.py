@@ -3,10 +3,10 @@
 import uuid
 from datetime import datetime, timedelta
 
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,19 +14,21 @@ from app.config import settings
 from app.db.database import get_db
 from app.models.models import User
 
-# 密码哈希
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 # Bearer token 提取
 security = HTTPBearer()
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    """哈希密码。bcrypt 自动截断到 72 字节。"""
+    pwd_bytes = password.encode("utf-8")[:72]
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    """验证密码。"""
+    pwd_bytes = plain_password.encode("utf-8")[:72]
+    return bcrypt.checkpw(pwd_bytes, hashed_password.encode("utf-8"))
 
 
 def create_access_token(user_id: uuid.UUID, is_admin: bool = False) -> str:

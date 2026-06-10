@@ -23,8 +23,7 @@ tiktoken>=0.7.0
 
 # --- 认证 ---
 python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
-bcrypt>=4.1.2
+bcrypt>=4.0.0
 pydantic[email]>=2.7.0
 
 # --- 文档解析 ---
