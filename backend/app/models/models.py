@@ -73,7 +73,7 @@ class Conversation(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     title = Column(String(200), default="新对话")
-    kb_ids = Column(ARRAY(Integer), default=[])
+    kb_ids = Column(ARRAY(Integer), default=list)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="conversations")

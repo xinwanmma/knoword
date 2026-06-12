@@ -169,6 +169,11 @@ async def update_kb(
         cat = await db.get(Category, kb.category_id)
         category_name = cat.name if cat else None
 
+    count_result = await db.execute(
+        select(func.count(Document.id)).where(Document.kb_id == kb_id)
+    )
+    doc_count = count_result.scalar() or 0
+
     return KnowledgeBaseOut(
         id=kb.id,
         name=kb.name,
@@ -178,6 +183,7 @@ async def update_kb(
         owner_id=kb.owner_id,
         is_global=kb.is_global,
         created_at=kb.created_at,
+        document_count=doc_count,
     )
 
 

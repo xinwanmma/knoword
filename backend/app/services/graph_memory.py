@@ -73,7 +73,7 @@ async def extract_entities(text: str) -> list[dict]:
 
     try:
         from langchain_core.messages import HumanMessage
-        response = llm.invoke([HumanMessage(content=prompt)])
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
         content = response.content.strip()
 
         # 尝试提取 JSON
@@ -143,6 +143,11 @@ async def add_to_graph(user_id: str, messages: list[dict]) -> dict:
             # 创建关系
             for rel in item.get("relations", []):
                 rel_type = rel.get("type", "RELATED_TO").upper().replace(" ", "_")
+            # 清洗关系类型，防止 Cypher 注入
+            import re as _re
+            rel_type = _re.sub(r'[^A-Z0-9_]', '', rel_type)
+            if not rel_type:
+                rel_type = "RELATED_TO"
                 target_name = rel.get("target", "").strip()
                 if not target_name:
                     continue
@@ -226,6 +231,13 @@ async def search_graph(user_id: str, query: str, max_depth: int = 2) -> dict:
                     "type": record["related_type"],
                     "relation_to_center": record["rel_types"],
                 })
+                # 收集关系
+                for rt in record.get("rel_types", []):
+                    result_relations.append({
+                        "source": record["center"],
+                        "type": rt,
+                        "target": record["related_name"],
+                    })
 
     # 去重
     seen = set()

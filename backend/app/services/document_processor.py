@@ -22,13 +22,10 @@ def _make_vector_id(kb_id: int, doc_id: int, chunk_index: int) -> str:
 
 
 async def process_document(doc_id: int, file_path: str):
-    """异步处理单个文档：解析 → 分块 → 向量化 → 写入 ChromaDB。
-
-    在后台任务中调用，处理完成后更新 Document 状态。
-    """
-    # 使用独立的 session（后台任务不共享请求 session）
+    """异步处理单个文档：解析 → 分块 → 向量化 → 写入 ChromaDB。"""
     from app.db.database import async_session_factory
 
+    doc = None
     async with async_session_factory() as db:
         try:
             # 获取文档记录
@@ -90,12 +87,13 @@ async def process_document(doc_id: int, file_path: str):
 
         except Exception as e:
             logger.error(f"[doc_{doc_id}] 处理失败: {e}", exc_info=True)
-            try:
-                doc.status = "failed"
-                doc.error = str(e)[:1000]
-                await db.commit()
-            except Exception:
-                pass
+            if doc is not None:
+                try:
+                    doc.status = "failed"
+                    doc.error = str(e)[:1000]
+                    await db.commit()
+                except Exception:
+                    pass
 
 
 async def remove_document_vectors(doc_id: int):

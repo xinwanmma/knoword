@@ -265,7 +265,7 @@ async def rag_agent_node(state: AgentState) -> dict:
     llm = get_llm()
     try:
         from langchain_core.messages import HumanMessage as LCHumanMessage, SystemMessage as LCSysMessage
-        response = llm.invoke([
+        response = await llm.ainvoke([
             LCSysMessage(content="你是一个知识库问答助手。"),
             LCHumanMessage(content=system_prompt),
         ])
@@ -316,7 +316,7 @@ async def general_agent_node(state: AgentState) -> dict:
     llm = get_llm()
     try:
         from langchain_core.messages import HumanMessage as LCHumanMessage, SystemMessage as LCSysMessage
-        response = llm.invoke([
+        response = await llm.ainvoke([
             LCSysMessage(content="你是一个智能助手。"),
             LCHumanMessage(content=system_prompt),
         ])

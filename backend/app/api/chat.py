@@ -63,19 +63,29 @@ async def _load_memories(user_id: str, query: str) -> dict:
 
     tasks = []
 
+    # 异步空操作函数
+    async def _noop_list():
+        return []
+
+    async def _noop_dict_ctx():
+        return {"context": ""}
+
+    async def _noop_dict():
+        return {}
+
     # Mem0
     if settings.MEM0_ENABLED:
         from app.services.memory_service import search_memories
         tasks.append(search_memories(user_id, query, top_k=5))
     else:
-        tasks.append(asyncio.coroutine(lambda: [])())
+        tasks.append(_noop_list())
 
     # Memary
     if settings.MEMARY_ENABLED:
         from app.services.graph_memory import search_graph
         tasks.append(search_graph(user_id, query))
     else:
-        tasks.append(asyncio.coroutine(lambda: {"context": ""})())
+        tasks.append(_noop_dict_ctx())
 
     # Store
     if settings.STORE_ENABLED:
@@ -89,7 +99,7 @@ async def _load_memories(user_id: str, query: str) -> dict:
 
         tasks.append(_load_store())
     else:
-        tasks.append(asyncio.coroutine(lambda: {})())
+        tasks.append(_noop_dict())
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -207,37 +217,39 @@ async def chat(
                             yield _sse_event("token", char)
                             await asyncio.sleep(0)
 
-            # 6. 保存对话到数据库
-            if not conversation_id:
-                conv = Conversation(
+            # 6. 保存对话到数据库（使用新 session，避免 StreamingResponse 竞态）
+            from app.db.database import async_session_factory
+            async with async_session_factory() as write_db:
+                if not conversation_id:
+                    conv = Conversation(
+                        id=uuid.uuid4(),
+                        user_id=current_user.id,
+                        title=req.query[:20],
+                        kb_ids=req.kb_ids if not req.search_all else [],
+                    )
+                    write_db.add(conv)
+                    await write_db.flush()
+                    conversation_id = str(conv.id)
+
+                # 保存用户消息
+                user_msg = Message(
                     id=uuid.uuid4(),
-                    user_id=current_user.id,
-                    title=req.query[:20],
-                    kb_ids=req.kb_ids if not req.search_all else [],
+                    conversation_id=uuid.UUID(conversation_id),
+                    role="user",
+                    content=req.query,
                 )
-                db.add(conv)
-                await db.flush()
-                conversation_id = str(conv.id)
+                write_db.add(user_msg)
 
-            # 保存用户消息
-            user_msg = Message(
-                id=uuid.uuid4(),
-                conversation_id=uuid.UUID(conversation_id),
-                role="user",
-                content=req.query,
-            )
-            db.add(user_msg)
-
-            # 保存助手回答
-            assistant_msg = Message(
-                id=uuid.uuid4(),
-                conversation_id=uuid.UUID(conversation_id),
-                role="assistant",
-                content=full_answer,
-                sources=sources_data if sources_data else None,
-            )
-            db.add(assistant_msg)
-            await db.commit()
+                # 保存助手回答
+                assistant_msg = Message(
+                    id=uuid.uuid4(),
+                    conversation_id=uuid.UUID(conversation_id),
+                    role="assistant",
+                    content=full_answer,
+                    sources=sources_data if sources_data else None,
+                )
+                write_db.add(assistant_msg)
+                await write_db.commit()
 
             # 7. 异步更新三层记忆
             asyncio.create_task(_update_memories(

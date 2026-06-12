@@ -59,7 +59,7 @@ async def rerank_with_llm(
 
     try:
         from langchain_core.messages import HumanMessage
-        response = llm.invoke([HumanMessage(content=prompt)])
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
         content = response.content.strip()
 
         # 解析分数
