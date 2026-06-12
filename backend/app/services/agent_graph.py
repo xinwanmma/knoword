@@ -52,28 +52,24 @@ class AgentState(TypedDict):
 # ==================== Agent 工具 ====================
 
 async def _retrieve_documents(query: str, kb_ids: list[int], search_all: bool, user_id: str) -> dict:
-    """检索文档（复用现有逻辑）。"""
-    from app.services.ollama_service import get_embedding
-    from app.services.vectorstore import search_documents
-
-    # 获取 embedding
-    query_embedding = await get_embedding(query)
+    """检索文档 — 使用混合检索（BM25 + 向量）。"""
+    from app.services.hybrid_search import hybrid_search
 
     # 构建过滤条件
     if search_all:
-        where_filter = None
+        filter_kb_ids = None
     elif kb_ids:
-        if len(kb_ids) == 1:
-            where_filter = {"kb_id": kb_ids[0]}
-        else:
-            where_filter = {"kb_id": {"$in": kb_ids}}
+        filter_kb_ids = kb_ids
     else:
-        where_filter = None
+        filter_kb_ids = None
 
-    if where_filter:
-        return search_documents(query_embedding=query_embedding, n_results=5, where=where_filter)
-    else:
-        return search_documents(query_embedding=query_embedding, n_results=5)
+    return await hybrid_search(
+        query=query,
+        kb_ids=filter_kb_ids,
+        n_results=5,
+        vector_weight=0.6,
+        bm25_weight=0.4,
+    )
 
 
 def _format_sources_text(search_results: dict) -> str:
@@ -193,6 +189,9 @@ async def rag_agent_node(state: AgentState) -> dict:
     # 检索文档
     search_results = await _retrieve_documents(query, kb_ids, search_all, user_id)
     sources = []
+
+    # 对检索结果进行 Reranking
+    candidates = []
     for i, (doc_text, meta, dist) in enumerate(
         zip(
             search_results.get("documents", []),
@@ -200,13 +199,32 @@ async def rag_agent_node(state: AgentState) -> dict:
             search_results.get("distances", []),
         )
     ):
+        candidates.append({
+            "text": doc_text,
+            "metadata": meta,
+            "score": round(1 - dist, 4),
+        })
+
+    # Reranking（关键词融合快速排序，不依赖 LLM）
+    from app.services.reranker import rerank_with_score_fusion
+    reranked = await rerank_with_score_fusion(query, candidates, top_n=5)
+
+    for item in reranked:
+        meta = item["metadata"]
         sources.append({
             "doc_id": meta.get("doc_id", 0),
             "filename": meta.get("filename", ""),
             "page": meta.get("page"),
-            "content": doc_text[:500],
-            "score": round(1 - dist, 4),
+            "content": item["text"][:500],
+            "score": item.get("rerank_score", item["score"]),
         })
+
+    # 构建 rerank 后的搜索结果用于 prompt
+    reranked_search_results = {
+        "documents": [r["text"] for r in reranked],
+        "metadatas": [r["metadata"] for r in reranked],
+        "distances": [1.0 - r.get("rerank_score", r["score"]) for r in reranked],
+    }
 
     # 格式化记忆上下文
     memories_text = _format_memories_text(
@@ -215,8 +233,8 @@ async def rag_agent_node(state: AgentState) -> dict:
         state.get("store_data", {}),
     )
 
-    # 格式化检索结果
-    sources_text = _format_sources_text(search_results)
+    # 格式化检索结果（使用 rerank 后的结果）
+    sources_text = _format_sources_text(reranked_search_results)
 
     # 加载最近 5 轮对话历史
     history_text = ""
@@ -324,7 +342,13 @@ def route_after_supervisor(state: AgentState) -> str:
 # ==================== 构建图 ====================
 
 def build_agent_graph():
-    """构建 LangGraph StateGraph。"""
+    """构建 LangGraph StateGraph。
+
+    使用 MemorySaver checkpointer 持久化 Agent 状态，
+    支持断点续传和多轮对话上下文。
+    """
+    from app.services.checkpoint_service import get_checkpointer
+
     graph = StateGraph(AgentState)
 
     # 添加节点
@@ -351,9 +375,10 @@ def build_agent_graph():
     graph.add_edge("general_agent", "memory_update")
     graph.add_edge("memory_update", END)
 
-    # 编译
-    compiled = graph.compile()
-    logger.info("✅ LangGraph Agent 图编译成功")
+    # 编译（附带 checkpointer）
+    checkpointer = get_checkpointer()
+    compiled = graph.compile(checkpointer=checkpointer)
+    logger.info("✅ LangGraph Agent 图编译成功（MemorySaver checkpointer 已启用）")
     return compiled
 
 

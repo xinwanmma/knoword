@@ -183,9 +183,11 @@ async def chat(
 
             # 5. 运行 Agent 图（流式输出 token）
             graph = get_compiled_graph()
+            thread_id = str(current_user.id)
+            config = {"configurable": {"thread_id": thread_id}}
 
             agent_name = ""
-            async for event in graph.astream(initial_state, stream_mode="updates"):
+            async for event in graph.astream(initial_state, config, stream_mode="updates"):
                 for node_name, node_output in event.items():
                     if node_name == "supervisor":
                         agent_name = node_output.get("agent_name", "general")

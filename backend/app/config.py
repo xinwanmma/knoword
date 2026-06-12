@@ -69,6 +69,12 @@ class Settings:
     # --- Store 会话状态 ---
     STORE_ENABLED: bool = os.getenv("STORE_ENABLED", "true").lower() == "true"
 
+    # --- LangSmith 追踪 ---
+    LANGCHAIN_TRACING_V2: bool = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+    LANGCHAIN_API_KEY: str = os.getenv("LANGCHAIN_API_KEY", "")
+    LANGCHAIN_PROJECT: str = os.getenv("LANGCHAIN_PROJECT", "rag-knowledge-base")
+    LANGCHAIN_ENDPOINT: str = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
+
     # --- 应用 ---
     APP_NAME: str = "RAG 知识库系统"
     APP_VERSION: str = "0.1.0"

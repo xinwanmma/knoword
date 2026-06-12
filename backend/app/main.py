@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.db.database import init_db
 from app.services.ollama_service import close_client
+from app.middleware.logging import RequestLoggingMiddleware
 
 # 配置日志
 logging.basicConfig(
@@ -18,6 +19,15 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+# 配置 LangSmith（可选，需注册 https://smith.langchain.com）
+if settings.LANGCHAIN_TRACING_V2 and settings.LANGCHAIN_API_KEY:
+    import os as _os
+    _os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    _os.environ["LANGCHAIN_API_KEY"] = settings.LANGCHAIN_API_KEY
+    _os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
+    _os.environ["LANGCHAIN_ENDPOINT"] = settings.LANGCHAIN_ENDPOINT
+    logger.info(f"✅ LangSmith 追踪已启用: project={settings.LANGCHAIN_PROJECT}")
 
 
 async def _create_default_admin():
@@ -89,11 +99,14 @@ app = FastAPI(
 # CORS 中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 开发环境允许所有来源
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 请求日志中间件
+app.add_middleware(RequestLoggingMiddleware)
 
 
 # 全局异常处理
@@ -115,6 +128,7 @@ from app.api.health import router as health_router
 from app.api.store import router as store_router
 from app.api.memory import router as memory_router
 from app.api.graph_memory import router as graph_router
+from app.api.chunk_config import router as chunk_router
 
 API_PREFIX = settings.API_PREFIX
 
@@ -127,6 +141,7 @@ app.include_router(health_router, prefix=API_PREFIX)
 app.include_router(store_router, prefix=API_PREFIX)
 app.include_router(memory_router, prefix=API_PREFIX)
 app.include_router(graph_router, prefix=API_PREFIX)
+app.include_router(chunk_router, prefix=API_PREFIX)
 
 
 @app.get("/")
