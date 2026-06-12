@@ -26,6 +26,15 @@ python-jose[cryptography]>=3.3.0
 bcrypt>=4.0.0
 pydantic[email]>=2.7.0
 
+# --- LangChain + LangGraph ---
+langgraph>=0.2.0
+langchain-core>=0.3.0
+langchain-ollama>=0.2.0
+
+# --- 记忆系统 ---
+mem0ai>=0.1.0
+memary>=0.1.0
+
 # --- 文档解析 ---
 PyMuPDF>=1.24.0
 python-docx>=1.1.0

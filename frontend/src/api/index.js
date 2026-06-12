@@ -82,7 +82,7 @@ export const categoryAPI = {
 
 // 对话（SSE 流式）
 export const chatAPI = {
-  stream: (data, onToken, onSources, onDone, onError) => {
+  stream: (data, { onToken, onSources, onDone, onError, onAgent, onMemories }) => {
     const token = localStorage.getItem('token')
     const controller = new AbortController()
 
@@ -122,28 +122,21 @@ export const chatAPI = {
               const rawData = line.slice(6)
               try {
                 const parsed = JSON.parse(rawData)
-                if (eventType === 'token') {
-                  onToken(parsed)
-                } else if (eventType === 'sources') {
-                  onSources(parsed)
-                } else if (eventType === 'done') {
-                  onDone(parsed)
-                } else if (eventType === 'error') {
-                  onError(parsed.message || '生成失败')
-                }
+                if (eventType === 'token') onToken(parsed)
+                else if (eventType === 'sources') onSources(parsed)
+                else if (eventType === 'agent') onAgent && onAgent(parsed)
+                else if (eventType === 'memories') onMemories && onMemories(parsed)
+                else if (eventType === 'done') onDone(parsed)
+                else if (eventType === 'error') onError(parsed.message || '生成失败')
               } catch {
-                if (eventType === 'token') {
-                  onToken(rawData)
-                }
+                if (eventType === 'token') onToken(rawData)
               }
             }
           }
         }
       })
       .catch((err) => {
-        if (err.name !== 'AbortError') {
-          onError(err.message)
-        }
+        if (err.name !== 'AbortError') onError(err.message)
       })
 
     return controller
@@ -163,4 +156,30 @@ export const healthAPI = {
 export const adminAPI = {
   listUsers: () => api.get('/auth/admin/users'),
   toggleAdmin: (userId) => api.put(`/auth/admin/users/${userId}/toggle-admin`),
+}
+
+// Store 记忆
+export const storeAPI = {
+  list: (namespace) => api.get('/store', { params: { namespace } }),
+  get: (key, namespace = 'default') => api.get(`/store/${key}`, { params: { namespace } }),
+  put: (key, value, namespace = 'default') => api.put('/store', { key, value, namespace }),
+  delete: (key, namespace = 'default') => api.delete(`/store/${key}`, { params: { namespace } }),
+  clear: (namespace) => api.delete('/store', { params: { namespace } }),
+}
+
+// Mem0 记忆
+export const memoryAPI = {
+  list: () => api.get('/memory'),
+  search: (q, topK = 5) => api.get('/memory/search', { params: { q, top_k: topK } }),
+  stats: () => api.get('/memory/stats'),
+  delete: (memoryId) => api.delete(`/memory/${memoryId}`),
+  clear: () => api.delete('/memory'),
+}
+
+// Memary 知识图谱
+export const graphAPI = {
+  search: (q, maxDepth = 2) => api.get('/graph/search', { params: { q, max_depth: maxDepth } }),
+  entities: (limit = 20) => api.get('/graph/entities', { params: { limit } }),
+  timeline: () => api.get('/graph/timeline'),
+  clear: () => api.delete('/graph'),
 }

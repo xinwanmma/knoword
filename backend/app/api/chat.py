@@ -1,4 +1,4 @@
-"""RAG 对话路由 — 流式 SSE 对话、历史管理。"""
+"""RAG 对话路由 — LangGraph 多 Agent + 三层记忆 + SSE 流式。"""
 
 import json
 import uuid
@@ -7,7 +7,8 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, desc
+from langchain_core.messages import AIMessage, HumanMessage
+from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -15,75 +16,24 @@ from app.db.database import get_db
 from app.models.models import User, KnowledgeBase, Conversation, Message
 from app.schemas.schemas import ChatRequest, ConversationOut, MessageOut
 from app.core.security import get_current_user
-from app.services.ollama_service import get_embedding, chat_stream
-from app.services.vectorstore import search_documents
+from app.services.agent_graph import get_compiled_graph
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["对话"])
 
-SYSTEM_PROMPT = """你是一个知识库问答助手。请根据以下参考资料回答用户问题。
-如果参考资料中没有相关信息，请如实说明"根据现有知识库资料，未找到相关信息"。
-请用中文回答，保持回答准确、简洁、有条理。"""
 
-CONTEXT_TEMPLATE = """参考资料：
-{sources}
-
-历史对话：
-{history}
-
-用户问题：{query}"""
-
-
-def _format_sources_for_prompt(search_results: dict) -> str:
-    """将检索结果格式化为 Prompt 中的参考资料。"""
-    if not search_results["documents"]:
-        return "(无相关参考资料)"
-
-    lines = []
-    for i, (doc_text, meta, dist) in enumerate(
-        zip(search_results["documents"], search_results["metadatas"], search_results["distances"])
-    ):
-        # cosine distance → similarity score
-        score = round(1 - dist, 4)
-        filename = meta.get("filename", "未知文件")
-        page = meta.get("page", "?")
-        lines.append(f"[来源{i+1}] {filename} 第{page}页 (相关度: {score})\n{doc_text}")
-
-    return "\n\n".join(lines)
-
-
-def _format_history_for_prompt(messages: list[MessageOut]) -> str:
-    """将最近 5 轮对话历史格式化为 Prompt。"""
-    if not messages:
-        return "(无历史对话)"
-
-    # 取最近 5 轮（10 条消息）
-    recent = messages[-10:]
-    lines = []
-    for msg in recent:
-        role_name = "用户" if msg.role == "user" else "助手"
-        lines.append(f"{role_name}: {msg.content[:200]}")
-
-    return "\n".join(lines)
-
-
-async def _get_user_accessible_kb_ids(user: User, db: AsyncSession) -> list[int]:
-    """获取用户有权限访问的所有知识库 ID。"""
-    query = select(KnowledgeBase.id).where(
-        (KnowledgeBase.owner_id == user.id) | (KnowledgeBase.is_global == True)
-    )
-    if user.is_admin:
-        query = select(KnowledgeBase.id)
-
-    result = await db.execute(query)
-    return [row[0] for row in result.all()]
+def _sse_event(event: str, data) -> str:
+    """构造 SSE 事件字符串。"""
+    if isinstance(data, dict) or isinstance(data, list):
+        data = json.dumps(data, ensure_ascii=False)
+    return f"event: {event}\ndata: {data}\n\n"
 
 
 async def _load_conversation_history(
     conversation_id: str, db: AsyncSession
-) -> list[MessageOut]:
-    """加载对话历史。"""
+) -> list[HumanMessage | AIMessage]:
+    """加载对话历史为 LangChain 消息格式。"""
     try:
         conv_uuid = uuid.UUID(conversation_id)
     except ValueError:
@@ -95,23 +45,89 @@ async def _load_conversation_history(
         .order_by(Message.created_at)
     )
     messages = result.scalars().all()
-    return [
-        MessageOut(
-            id=m.id,
-            role=m.role,
-            content=m.content,
-            sources=m.sources,
-            created_at=m.created_at,
-        )
-        for m in messages
+
+    lc_messages = []
+    for m in messages:
+        if m.role == "user":
+            lc_messages.append(HumanMessage(content=m.content))
+        elif m.role == "assistant":
+            lc_messages.append(AIMessage(content=m.content))
+    return lc_messages
+
+
+async def _load_memories(user_id: str, query: str) -> dict:
+    """并行加载三层记忆。"""
+    mem0_memories = []
+    graph_context = ""
+    store_data = {}
+
+    tasks = []
+
+    # Mem0
+    if settings.MEM0_ENABLED:
+        from app.services.memory_service import search_memories
+        tasks.append(search_memories(user_id, query, top_k=5))
+    else:
+        tasks.append(asyncio.coroutine(lambda: [])())
+
+    # Memary
+    if settings.MEMARY_ENABLED:
+        from app.services.graph_memory import search_graph
+        tasks.append(search_graph(user_id, query))
+    else:
+        tasks.append(asyncio.coroutine(lambda: {"context": ""})())
+
+    # Store
+    if settings.STORE_ENABLED:
+        from app.db.database import async_session_factory
+        from app.services.store_service import store_get_all
+
+        async def _load_store():
+            async with async_session_factory() as db:
+                entries = await store_get_all(db, user_id)
+                return {e["key"]: e["value"] for e in entries}
+
+        tasks.append(_load_store())
+    else:
+        tasks.append(asyncio.coroutine(lambda: {})())
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    if not isinstance(results[0], Exception):
+        mem0_memories = results[0] if isinstance(results[0], list) else []
+    if not isinstance(results[1], Exception):
+        r1 = results[1]
+        graph_context = r1.get("context", "") if isinstance(r1, dict) else ""
+    if not isinstance(results[2], Exception):
+        store_data = results[2] if isinstance(results[2], dict) else {}
+
+    return {
+        "mem0_memories": mem0_memories,
+        "graph_context": graph_context,
+        "store_data": store_data,
+    }
+
+
+async def _update_memories(user_id: str, query: str, answer: str):
+    """异步更新三层记忆（不阻塞响应）。"""
+    messages = [
+        {"role": "user", "content": query},
+        {"role": "assistant", "content": answer},
     ]
 
+    try:
+        if settings.MEM0_ENABLED:
+            from app.services.memory_service import add_memory
+            await add_memory(user_id, messages)
+    except Exception as e:
+        logger.error(f"Mem0 记忆写入失败: {e}")
 
-def _sse_event(event: str, data: str | dict) -> str:
-    """构造 SSE 事件字符串。"""
-    if isinstance(data, dict):
-        data = json.dumps(data, ensure_ascii=False)
-    return f"event: {event}\ndata: {data}\n\n"
+    try:
+        if settings.MEMARY_ENABLED:
+            from app.services.graph_memory import add_to_graph
+            await add_to_graph(user_id, messages)
+    except Exception as e:
+        logger.error(f"Memary 图谱写入失败: {e}")
 
 
 @router.post("")
@@ -120,99 +136,77 @@ async def chat(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """发送消息并获取流式回答（SSE）。
+    """发送消息并获取流式回答（LangGraph + SSE）。
 
     SSE 事件流：
-    - sources: 引用来源
-    - token: 逐 token 流式返回
-    - done: 回答完毕
-    - error: 错误
+    - agent:    当前处理的 Agent 名称
+    - sources:  RAG 引用来源
+    - memories: 命中的记忆摘要
+    - token:    逐 token 流式返回
+    - done:     回答完毕
+    - error:    错误
     """
 
     async def event_stream():
         conversation_id = req.conversation_id
+        full_answer = ""
         sources_data = []
 
         try:
-            # 步骤 1：确定搜索的知识库范围
-            if req.search_all:
-                kb_ids = await _get_user_accessible_kb_ids(current_user, db)
-            elif req.kb_ids:
-                # 过滤用户有权限的知识库
-                accessible = await _get_user_accessible_kb_ids(current_user, db)
-                kb_ids = [kid for kid in req.kb_ids if kid in accessible]
-            else:
-                kb_ids = []
-
-            # 步骤 2：检索相关文档
-            search_results = {"documents": [], "metadatas": [], "distances": []}
-            if kb_ids:
-                query_embedding = await get_embedding(req.query)
-
-                # 构建过滤条件
-                if len(kb_ids) == 1:
-                    where_filter = {"kb_id": kb_ids[0]}
-                else:
-                    where_filter = {"kb_id": {"$in": kb_ids}}
-
-                search_results = search_documents(
-                    query_embedding=query_embedding,
-                    n_results=5,
-                    where=where_filter,
-                )
-
-            # 步骤 3：构造 sources 数据
-            sources_data = []
-            for i, (doc_text, meta, dist) in enumerate(
-                zip(
-                    search_results.get("documents", []),
-                    search_results.get("metadatas", []),
-                    search_results.get("distances", []),
-                )
-            ):
-                score = round(1 - dist, 4)
-                sources_data.append({
-                    "doc_id": meta.get("doc_id", 0),
-                    "filename": meta.get("filename", ""),
-                    "page": meta.get("page"),
-                    "content": doc_text[:500],
-                    "score": score,
-                })
-
-            # 步骤 4：发送 sources 事件（先发，前端立即渲染引用卡片）
-            if sources_data:
-                yield _sse_event("sources", sources_data)
-
-            # 步骤 5：加载历史对话
+            # 1. 加载对话历史
             history_messages = []
             if conversation_id:
                 history_messages = await _load_conversation_history(conversation_id, db)
 
-            # 步骤 6：构造 Prompt
-            context_text = _format_sources_for_prompt(search_results)
-            history_text = _format_history_for_prompt(history_messages)
-            user_message = CONTEXT_TEMPLATE.format(
-                sources=context_text,
-                history=history_text,
-                query=req.query,
-            )
+            # 2. 构建当前消息
+            current_message = HumanMessage(content=req.query)
+            all_messages = history_messages + [current_message]
 
-            messages_for_llm = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ]
+            # 3. 加载三层记忆
+            memories = await _load_memories(str(current_user.id), req.query)
 
-            # 步骤 7：流式调用 LLM
-            full_answer = ""
-            async for token in chat_stream(messages_for_llm):
-                full_answer += token
-                yield _sse_event("token", token)
-                # 让出控制权，避免阻塞
-                await asyncio.sleep(0)
+            # 4. 构建初始状态
+            initial_state = {
+                "messages": all_messages,
+                "user_id": str(current_user.id),
+                "user_name": current_user.username,
+                "kb_ids": req.kb_ids or [],
+                "search_all": req.search_all,
+                "mem0_memories": memories["mem0_memories"],
+                "graph_context": memories["graph_context"],
+                "store_data": memories["store_data"],
+                "agent_answer": "",
+                "sources": [],
+                "agent_name": "",
+                "original_query": req.query,
+            }
 
-            # 步骤 8：保存对话到数据库
+            # 5. 运行 Agent 图（流式输出 token）
+            graph = get_compiled_graph()
+
+            agent_name = ""
+            async for event in graph.astream(initial_state, stream_mode="updates"):
+                for node_name, node_output in event.items():
+                    if node_name == "supervisor":
+                        agent_name = node_output.get("agent_name", "general")
+                        yield _sse_event("agent", {"name": agent_name})
+
+                    elif node_name in ("rag_agent", "general_agent"):
+                        agent_answer = node_output.get("agent_answer", "")
+                        sources_data = node_output.get("sources", [])
+                        full_answer = agent_answer
+
+                        # 发送 sources
+                        if sources_data:
+                            yield _sse_event("sources", sources_data)
+
+                        # 逐 token 流式发送（按字符分割模拟流式）
+                        for char in agent_answer:
+                            yield _sse_event("token", char)
+                            await asyncio.sleep(0)
+
+            # 6. 保存对话到数据库
             if not conversation_id:
-                # 创建新会话
                 conv = Conversation(
                     id=uuid.uuid4(),
                     user_id=current_user.id,
@@ -222,11 +216,6 @@ async def chat(
                 db.add(conv)
                 await db.flush()
                 conversation_id = str(conv.id)
-            else:
-                conv_result = await db.execute(
-                    select(Conversation).where(Conversation.id == uuid.UUID(conversation_id))
-                )
-                conv = conv_result.scalar_one_or_none()
 
             # 保存用户消息
             user_msg = Message(
@@ -248,7 +237,12 @@ async def chat(
             db.add(assistant_msg)
             await db.commit()
 
-            # 步骤 9：发送 done 事件
+            # 7. 异步更新三层记忆
+            asyncio.create_task(_update_memories(
+                str(current_user.id), req.query, full_answer
+            ))
+
+            # 8. 发送 done 事件
             yield _sse_event("done", {"conversation_id": conversation_id})
 
         except Exception as e:
@@ -335,5 +329,5 @@ async def delete_conversation(
     if conv.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="无权删除此会话")
 
-    await db.delete(conv)  # CASCADE 删除消息
+    await db.delete(conv)
     await db.commit()

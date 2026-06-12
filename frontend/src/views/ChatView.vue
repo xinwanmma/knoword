@@ -66,6 +66,11 @@
 
           <!-- AI 回答 -->
           <div v-else class="assistant-block">
+            <!-- Agent 标签 -->
+            <div class="agent-label">
+              <span v-if="msg.agent === 'rag'" class="agent-tag agent-rag">🟢 RAG 助手</span>
+              <span v-else class="agent-tag agent-general">🔵 通用助手</span>
+            </div>
             <!-- 引用来源 -->
             <div v-if="msg.sources && msg.sources.length > 0" class="sources-section">
               <div class="sources-title">
@@ -100,6 +105,11 @@
 
         <!-- 正在生成的流式回答 -->
         <div v-if="streaming" class="assistant-block">
+          <!-- Agent 标签 -->
+          <div v-if="streamAgent" class="agent-label">
+            <span v-if="streamAgent === 'rag'" class="agent-tag agent-rag">🟢 RAG 助手</span>
+            <span v-else class="agent-tag agent-general">🔵 通用助手</span>
+          </div>
           <div v-if="streamSources.length > 0" class="sources-section">
             <div class="sources-title">
               <el-icon><Document /></el-icon> 引用来源 ({{ streamSources.length }})
@@ -120,6 +130,10 @@
 
       <!-- 输入区 -->
       <div class="input-area">
+        <el-button text @click="showMemoryPanel = true">
+          <el-icon size="18"><DataLine /></el-icon>
+          <span style="margin-left: 4px; font-size: 12px">记忆</span>
+        </el-button>
         <el-input
           v-model="inputText"
           type="textarea"
@@ -139,14 +153,18 @@
       </div>
     </div>
   </div>
+
+  <!-- 记忆面板 -->
+  <MemoryPanel :visible="showMemoryPanel" @close="showMemoryPanel = false" />
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, nextTick, watch } from 'vue'
 import { chatAPI, kbAPI } from '../api'
-import { Plus, ChatLineRound, Delete, Document, Promotion } from '@element-plus/icons-vue'
+import { Plus, ChatLineRound, Delete, Document, Promotion, DataLine } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { ElMessage } from 'element-plus'
+import MemoryPanel from '../components/MemoryPanel.vue'
 
 // 状态
 const messages = ref([])
@@ -156,11 +174,13 @@ const inputText = ref('')
 const streaming = ref(false)
 const streamText = ref('')
 const streamSources = ref([])
+const streamAgent = ref('')
 const searchMode = ref('selected')
 const selectedKbIds = ref([])
 const knowledgeBases = ref([])
 const expandedSources = reactive({})
 const messagesContainer = ref()
+const showMemoryPanel = ref(false)
 let streamController = null
 
 onMounted(async () => {
@@ -216,6 +236,7 @@ function sendMessage() {
   inputText.value = ''
   streamText.value = ''
   streamSources.value = []
+  streamAgent.value = ''
   streaming.value = true
   scrollToBottom()
 
@@ -228,40 +249,40 @@ function sendMessage() {
   }
 
   // 启动 SSE 流
-  streamController = chatAPI.stream(
-    reqData,
-    // onToken
-    (token) => {
+  streamController = chatAPI.stream(reqData, {
+    onToken: (token) => {
       streamText.value += token
       scrollToBottom()
     },
-    // onSources
-    (sources) => {
+    onSources: (sources) => {
       streamSources.value = sources
     },
-    // onDone
-    (data) => {
+    onAgent: (data) => {
+      streamAgent.value = data.name
+    },
+    onDone: (data) => {
       streaming.value = false
       currentConvId.value = data.conversation_id
-      // 将流式回答转为完整消息
       messages.value.push({
         role: 'assistant',
         content: streamText.value,
         sources: streamSources.value.length > 0 ? [...streamSources.value] : null,
+        agent: streamAgent.value,
       })
       streamText.value = ''
       streamSources.value = []
+      streamAgent.value = ''
       loadConversations()
       scrollToBottom()
     },
-    // onError
-    (msg) => {
+    onError: (msg) => {
       streaming.value = false
       ElMessage.error(msg)
       streamText.value = ''
       streamSources.value = []
+      streamAgent.value = ''
     },
-  )
+  })
 }
 
 function toggleSource(msgIdx, srcIdx) {
@@ -444,5 +465,25 @@ function scrollToBottom() {
   padding: 16px 20px;
   background: #fff;
   border-top: 1px solid #e4e7ed;
+}
+
+.agent-label {
+  margin-bottom: 4px;
+}
+
+.agent-tag {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.agent-rag {
+  background: #f0f9eb;
+  color: #67c23a;
+}
+
+.agent-general {
+  background: #ecf5ff;
+  color: #409eff;
 }
 </style>

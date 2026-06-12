@@ -112,6 +112,9 @@ from app.api.knowledge_base import router as kb_router, category_router
 from app.api.documents import router as doc_router
 from app.api.chat import router as chat_router
 from app.api.health import router as health_router
+from app.api.store import router as store_router
+from app.api.memory import router as memory_router
+from app.api.graph_memory import router as graph_router
 
 API_PREFIX = settings.API_PREFIX
 
@@ -121,6 +124,9 @@ app.include_router(category_router, prefix=API_PREFIX)
 app.include_router(doc_router, prefix=API_PREFIX)
 app.include_router(chat_router, prefix=API_PREFIX)
 app.include_router(health_router, prefix=API_PREFIX)
+app.include_router(store_router, prefix=API_PREFIX)
+app.include_router(memory_router, prefix=API_PREFIX)
+app.include_router(graph_router, prefix=API_PREFIX)
 
 
 @app.get("/")
