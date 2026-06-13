@@ -63,14 +63,6 @@ if errorlevel 1 (
 )
 echo   [OK] Ollama 模型就绪
 
-REM --- 4. 检查 Neo4j ---
-curl -s http://localhost:7474 >nul 2>&1
-if errorlevel 1 (
-    echo   [WARN] Neo4j 未运行，知识图谱功能不可用
-) else (
-    echo   [OK] Neo4j
-)
-
 REM --- 5. 检查 .env ---
 if not exist "%BACKEND_DIR%\.env" (
     echo   复制 .env ...

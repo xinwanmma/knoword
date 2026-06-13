@@ -27,8 +27,6 @@ def _make_state(**kwargs) -> dict:
         "user_name": "测试用户",
         "kb_ids": [],
         "search_all": False,
-        "mem0_memories": [],
-        "graph_context": "",
         "store_data": {},
         "agent_answer": "",
         "sources": [],
@@ -158,24 +156,19 @@ class TestRouteFunction:
 class TestMemoryRetrieval:
     """记忆检索节点测试。"""
 
-    def test_passthrough_memories(self):
-        """memory_retrieval 节点应该原样传递已加载的记忆。"""
+    def test_passthrough_store(self):
+        """memory_retrieval 节点应该原样传递 Store 数据。"""
         state = _make_state(
-            mem0_memories=[{"memory": "用户喜欢中文", "score": 0.9}],
-            graph_context="用户→工作→A公司",
-            store_data={"language": "zh-CN"},
+            store_data={"language": "zh-CN", "style": "concise"},
         )
         result = memory_retrieval_node(state)
-        assert len(result["mem0_memories"]) == 1
-        assert result["graph_context"] == "用户→工作→A公司"
         assert result["store_data"]["language"] == "zh-CN"
+        assert result["store_data"]["style"] == "concise"
 
     def test_empty_memories(self):
         """无记忆时返回空值。"""
         state = _make_state()
         result = memory_retrieval_node(state)
-        assert result["mem0_memories"] == []
-        assert result["graph_context"] == ""
         assert result["store_data"] == {}
 
 
@@ -204,20 +197,17 @@ class TestFormatFunctions:
         text = _format_sources_text({"documents": []})
         assert "无相关参考资料" in text
 
-    def test_format_memories_all_layers(self):
-        """三层记忆全部存在时正确格式化。"""
+    def test_format_memories_store(self):
+        """Store 数据正确格式化。"""
         text = _format_memories_text(
-            memories=[{"memory": "用户素食"}, {"memory": "喜欢简洁回答"}],
-            graph_context="张三→就职→A公司",
             store_data={"language": "zh", "style": "concise"},
         )
-        assert "用户素食" in text
-        assert "张三→就职→A公司" in text
         assert "language" in text
+        assert "concise" in text
 
     def test_format_memories_empty(self):
-        """无记忆时返回空字符串。"""
-        text = _format_memories_text([], "", {})
+        """无 Store 数据时返回空字符串。"""
+        text = _format_memories_text({})
         assert text == ""
 
 
@@ -254,8 +244,8 @@ class TestRAGAgent:
     @patch("app.services.agent_graph._retrieve_documents")
     @patch("app.services.agent_graph.get_llm")
     @pytest.mark.asyncio
-    async def test_rag_agent_injects_memories(self, mock_llm, mock_retrieve):
-        """RAG Agent 应注入记忆上下文。"""
+    async def test_rag_agent_injects_store_data(self, mock_llm, mock_retrieve):
+        """RAG Agent 应注入 Store 状态上下文。"""
         mock_retrieve.return_value = {"documents": [], "metadatas": [], "distances": []}
         mock_llm.return_value.invoke = MagicMock(
             return_value=_mock_llm_response("回答内容")
@@ -265,14 +255,14 @@ class TestRAGAgent:
             messages=[HumanMessage(content="问题")],
             kb_ids=[1],
             original_query="问题",
-            mem0_memories=[{"memory": "用户素食"}],
+            store_data={"language": "zh-CN", "style": "concise"},
         )
 
         result = await rag_agent_node(state)
-        # 验证 LLM 被调用且 prompt 中包含记忆
-        call_args = mock_llm.return_value.invoke.call_args
+        # 验证 LLM 被调用且 prompt 中包含 Store 状态
+        call_args = mock_llm.return_value.ainvoke.call_args
         prompt_text = call_args[0][0][1].content
-        assert "用户素食" in prompt_text
+        assert "language" in prompt_text
 
 
 # ==================== General Agent 测试 ====================

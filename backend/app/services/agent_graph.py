@@ -3,11 +3,11 @@
 架构：
 START → memory_retrieval → supervisor → [rag_agent | general_agent] → memory_update → END
 
-- memory_retrieval: 并行加载三层记忆（Mem0 + Memary + Store）
+- memory_retrieval: 加载用户 Store 状态
 - supervisor: 用 LLM 判断意图，路由到对应 Agent
-- rag_agent: 知识库检索 + 记忆上下文 + LLM 生成
-- general_agent: 记忆上下文 + LLM 生成
-- memory_update: 对话结束后写入三层记忆
+- rag_agent: 知识库检索 + Store 上下文 + LLM 生成
+- general_agent: Store 上下文 + LLM 生成
+- memory_update: 对话后处理（可扩展）
 """
 
 import json
@@ -35,17 +35,15 @@ class AgentState(TypedDict):
     kb_ids: list[int]
     search_all: bool
 
-    # 三层记忆
-    mem0_memories: list[dict]       # Mem0 向量记忆
-    graph_context: str              # Memary 图谱上下文
-    store_data: dict                # Store 会话状态
+    # Store 用户状态
+    store_data: dict
 
     # Agent 输出
     agent_answer: str
     sources: list[dict]
     agent_name: str
 
-    # 原始查询（用于记忆写入）
+    # 原始查询
     original_query: str
 
 
@@ -90,38 +88,19 @@ def _format_sources_text(search_results: dict) -> str:
     return "\n\n".join(lines)
 
 
-def _format_memories_text(memories: list[dict], graph_context: str, store_data: dict) -> str:
-    """将三层记忆格式化为 Prompt 文本。"""
-    parts = []
-
-    # Mem0 记忆
-    if memories:
-        mem_lines = [f"- {m.get('memory', '')}" for m in memories[:5]]
-        parts.append("用户记忆（事实/偏好）：\n" + "\n".join(mem_lines))
-
-    # Memary 图谱
-    if graph_context:
-        parts.append("用户知识图谱：\n" + graph_context)
-
-    # Store 状态
+def _format_memories_text(store_data: dict) -> str:
+    """将 Store 状态格式化为 Prompt 文本。"""
     if store_data:
         store_lines = [f"- {k}: {v}" for k, v in store_data.items()]
-        parts.append("用户会话状态：\n" + "\n".join(store_lines))
-
-    return "\n\n".join(parts) if parts else ""
+        return "用户会话状态：\n" + "\n".join(store_lines)
+    return ""
 
 
 # ==================== Graph 节点 ====================
 
 def memory_retrieval_node(state: AgentState) -> dict:
-    """记忆检索节点：加载三层记忆。
-
-    注意：由于 LangGraph 节点支持同步调用，这里只设置占位。
-    实际异步加载在 chat.py 调用前完成，结果通过 state 传入。
-    """
+    """记忆检索节点：加载用户 Store 状态。"""
     return {
-        "mem0_memories": state.get("mem0_memories", []),
-        "graph_context": state.get("graph_context", ""),
         "store_data": state.get("store_data", {}),
     }
 
@@ -227,11 +206,7 @@ async def rag_agent_node(state: AgentState) -> dict:
     }
 
     # 格式化记忆上下文
-    memories_text = _format_memories_text(
-        state.get("mem0_memories", []),
-        state.get("graph_context", ""),
-        state.get("store_data", {}),
-    )
+    memories_text = _format_memories_text(state.get("store_data", {}))
 
     # 格式化检索结果（使用 rerank 后的结果）
     sources_text = _format_sources_text(reranked_search_results)
@@ -287,11 +262,7 @@ async def general_agent_node(state: AgentState) -> dict:
     user_name = state.get("user_name", "用户")
 
     # 格式化记忆上下文
-    memories_text = _format_memories_text(
-        state.get("mem0_memories", []),
-        state.get("graph_context", ""),
-        state.get("store_data", {}),
-    )
+    memories_text = _format_memories_text(state.get("store_data", {}))
 
     # 加载最近对话历史
     history_text = ""

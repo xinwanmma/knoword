@@ -1,6 +1,6 @@
 # ============================================
 # RAG 知识库系统 - Docker Compose
-# 包含 PostgreSQL、ChromaDB、Neo4j
+# 包含 PostgreSQL + ChromaDB
 # ============================================
 
 services:
@@ -36,25 +36,6 @@ services:
       - IS_PERSISTENT=TRUE
       - PERSIST_DIRECTORY=/chroma/chroma
 
-  # --- Neo4j (Memary 知识图谱) ---
-  neo4j:
-    image: neo4j:5-community
-    container_name: rag_neo4j
-    restart: unless-stopped
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    environment:
-      NEO4J_AUTH: neo4j/password
-    volumes:
-      - neo4j_data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
 volumes:
   postgres_data:
   chroma_data:
-  neo4j_data:

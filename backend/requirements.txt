@@ -32,8 +32,7 @@ langchain-core>=0.3.0
 langchain-ollama>=0.2.0
 
 # --- 记忆系统 ---
-mem0ai>=0.1.0
-neo4j>=5.0.0
+# Store: PostgreSQL JSONB (不需要额外依赖)
 
 # --- 文档解析 ---
 PyMuPDF>=1.24.0

@@ -56,24 +56,8 @@ class Settings:
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123456")
     ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "admin@example.com")
 
-    # --- Mem0 向量记忆 ---
-    MEM0_ENABLED: bool = os.getenv("MEM0_ENABLED", "true").lower() == "true"
-    MEM0_LLM_MODEL: str = os.getenv("MEM0_LLM_MODEL", "qwen3.5:2b")
-    MEM0_EMBED_MODEL: str = os.getenv("MEM0_EMBED_MODEL", "qwen3-embedding:0.6b")
-
-    # --- Memary 知识图谱记忆 ---
-    MEMARY_ENABLED: bool = os.getenv("MEMARY_ENABLED", "true").lower() == "true"
-    NEO4J_URL: str = os.getenv("NEO4J_URL", "bolt://localhost:7687")
-    NEO4J_PW: str = os.getenv("NEO4J_PW", "password")
-
     # --- Store 会话状态 ---
     STORE_ENABLED: bool = os.getenv("STORE_ENABLED", "true").lower() == "true"
-
-    # --- LangSmith 追踪 ---
-    LANGCHAIN_TRACING_V2: bool = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
-    LANGCHAIN_API_KEY: str = os.getenv("LANGCHAIN_API_KEY", "")
-    LANGCHAIN_PROJECT: str = os.getenv("LANGCHAIN_PROJECT", "rag-knowledge-base")
-    LANGCHAIN_ENDPOINT: str = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
 
     # --- 应用 ---
     APP_NAME: str = "RAG 知识库系统"

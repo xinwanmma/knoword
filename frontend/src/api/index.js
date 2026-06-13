@@ -170,20 +170,3 @@ export const storeAPI = {
   delete: (key, namespace = 'default') => api.delete(`/store/${key}`, { params: { namespace } }),
   clear: (namespace) => api.delete('/store', { params: { namespace } }),
 }
-
-// Mem0 记忆
-export const memoryAPI = {
-  list: () => api.get('/memory'),
-  search: (q, topK = 5) => api.get('/memory/search', { params: { q, top_k: topK } }),
-  stats: () => api.get('/memory/stats'),
-  delete: (memoryId) => api.delete(`/memory/${memoryId}`),
-  clear: () => api.delete('/memory'),
-}
-
-// Memary 知识图谱
-export const graphAPI = {
-  search: (q, maxDepth = 2) => api.get('/graph/search', { params: { q, max_depth: maxDepth } }),
-  entities: (limit = 20) => api.get('/graph/entities', { params: { limit } }),
-  timeline: () => api.get('/graph/timeline'),
-  clear: () => api.delete('/graph'),
-}

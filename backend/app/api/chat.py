@@ -56,88 +56,23 @@ async def _load_conversation_history(
 
 
 async def _load_memories(user_id: str, query: str) -> dict:
-    """并行加载三层记忆。"""
-    mem0_memories = []
-    graph_context = ""
+    """加载用户 Store 状态。"""
     store_data = {}
 
-    tasks = []
-
-    # 异步空操作函数
-    async def _noop_list():
-        return []
-
-    async def _noop_dict_ctx():
-        return {"context": ""}
-
-    async def _noop_dict():
-        return {}
-
-    # Mem0
-    if settings.MEM0_ENABLED:
-        from app.services.memory_service import search_memories
-        tasks.append(search_memories(user_id, query, top_k=5))
-    else:
-        tasks.append(_noop_list())
-
-    # Memary
-    if settings.MEMARY_ENABLED:
-        from app.services.graph_memory import search_graph
-        tasks.append(search_graph(user_id, query))
-    else:
-        tasks.append(_noop_dict_ctx())
-
-    # Store
     if settings.STORE_ENABLED:
         from app.db.database import async_session_factory
         from app.services.store_service import store_get_all
 
-        async def _load_store():
-            async with async_session_factory() as db:
-                entries = await store_get_all(db, user_id)
-                return {e["key"]: e["value"] for e in entries}
+        async with async_session_factory() as db:
+            entries = await store_get_all(db, user_id)
+            store_data = {e["key"]: e["value"] for e in entries}
 
-        tasks.append(_load_store())
-    else:
-        tasks.append(_noop_dict())
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    if not isinstance(results[0], Exception):
-        mem0_memories = results[0] if isinstance(results[0], list) else []
-    if not isinstance(results[1], Exception):
-        r1 = results[1]
-        graph_context = r1.get("context", "") if isinstance(r1, dict) else ""
-    if not isinstance(results[2], Exception):
-        store_data = results[2] if isinstance(results[2], dict) else {}
-
-    return {
-        "mem0_memories": mem0_memories,
-        "graph_context": graph_context,
-        "store_data": store_data,
-    }
+    return {"store_data": store_data}
 
 
 async def _update_memories(user_id: str, query: str, answer: str):
-    """异步更新三层记忆（不阻塞响应）。"""
-    messages = [
-        {"role": "user", "content": query},
-        {"role": "assistant", "content": answer},
-    ]
-
-    try:
-        if settings.MEM0_ENABLED:
-            from app.services.memory_service import add_memory
-            await add_memory(user_id, messages)
-    except Exception as e:
-        logger.error(f"Mem0 记忆写入失败: {e}")
-
-    try:
-        if settings.MEMARY_ENABLED:
-            from app.services.graph_memory import add_to_graph
-            await add_to_graph(user_id, messages)
-    except Exception as e:
-        logger.error(f"Memary 图谱写入失败: {e}")
+    """对话结束后写入 Store 状态。"""
+    pass  # Store 由用户主动管理，不需要自动写入
 
 
 @router.post("")
@@ -182,8 +117,6 @@ async def chat(
                 "user_name": current_user.username,
                 "kb_ids": req.kb_ids or [],
                 "search_all": req.search_all,
-                "mem0_memories": memories["mem0_memories"],
-                "graph_context": memories["graph_context"],
                 "store_data": memories["store_data"],
                 "agent_answer": "",
                 "sources": [],

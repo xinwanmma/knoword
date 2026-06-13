@@ -20,15 +20,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 配置 LangSmith（可选，需注册 https://smith.langchain.com）
-if settings.LANGCHAIN_TRACING_V2 and settings.LANGCHAIN_API_KEY:
-    import os as _os
-    _os.environ["LANGCHAIN_TRACING_V2"] = "true"
-    _os.environ["LANGCHAIN_API_KEY"] = settings.LANGCHAIN_API_KEY
-    _os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
-    _os.environ["LANGCHAIN_ENDPOINT"] = settings.LANGCHAIN_ENDPOINT
-    logger.info(f"✅ LangSmith 追踪已启用: project={settings.LANGCHAIN_PROJECT}")
-
 
 async def _create_default_admin():
     """首次启动时自动创建默认管理员账号。"""
@@ -126,8 +117,6 @@ from app.api.documents import router as doc_router
 from app.api.chat import router as chat_router
 from app.api.health import router as health_router
 from app.api.store import router as store_router
-from app.api.memory import router as memory_router
-from app.api.graph_memory import router as graph_router
 from app.api.chunk_config import router as chunk_router
 
 API_PREFIX = settings.API_PREFIX
@@ -139,8 +128,6 @@ app.include_router(doc_router, prefix=API_PREFIX)
 app.include_router(chat_router, prefix=API_PREFIX)
 app.include_router(health_router, prefix=API_PREFIX)
 app.include_router(store_router, prefix=API_PREFIX)
-app.include_router(memory_router, prefix=API_PREFIX)
-app.include_router(graph_router, prefix=API_PREFIX)
 app.include_router(chunk_router, prefix=API_PREFIX)
 
 
