@@ -67,6 +67,7 @@ class Settings:
     APP_VERSION: str = "0.1.0"
     API_PREFIX: str = "/api"
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
+    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173")
 
 
 settings = Settings()

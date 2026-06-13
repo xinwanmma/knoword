@@ -193,14 +193,14 @@ async function loadKbs() {
   try {
     const { data } = await kbAPI.list()
     knowledgeBases.value = data
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 
 async function loadCategories() {
   try {
     const { data } = await categoryAPI.list()
     categories.value = data
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 
 function showCreateDialog() {
@@ -246,7 +246,7 @@ async function saveKb() {
     }
     kbDialogVisible.value = false
     await loadKbs()
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
   saving.value = false
 }
 
@@ -260,7 +260,7 @@ async function deleteKb(kb) {
     await kbAPI.delete(kb.id)
     ElMessage.success('已删除')
     await loadKbs()
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 
 async function openDocDialog(kb) {
@@ -274,7 +274,7 @@ async function loadDocuments(kbId) {
   try {
     const { data } = await docAPI.listByKb(kbId)
     documents.value = data
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 
 function handleFileChange(file) {
@@ -290,7 +290,7 @@ async function handleUpload() {
     uploadFiles.value = []
     await loadDocuments(currentKb.value.id)
     await loadKbs()
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
   uploading.value = false
 }
 
@@ -303,7 +303,7 @@ async function deleteDoc(doc) {
     ElMessage.success('已删除')
     await loadDocuments(currentKb.value.id)
     await loadKbs()
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 
 async function reindexDoc(doc) {
@@ -311,7 +311,7 @@ async function reindexDoc(doc) {
     await docAPI.reindex(doc.id)
     ElMessage.success('已开始重新索引')
     await loadDocuments(currentKb.value.id)
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 </script>
 

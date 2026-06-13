@@ -1,19 +1,18 @@
-"""Agent 图测试 — mock LLM，测试 Supervisor 路由逻辑。"""
+"""Agent 图测试 — mock LLM，测试 prepare/generate/postprocess 逻辑。"""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, AsyncMock as AMock
 from langchain_core.messages import HumanMessage, AIMessage
 
 from app.services.agent_graph import (
     AgentState,
     build_agent_graph,
-    supervisor_node,
-    route_after_supervisor,
+    prepare_node,
+    route_after_prepare,
     memory_retrieval_node,
-    rag_agent_node,
-    general_agent_node,
     _format_sources_text,
     _format_memories_text,
+    _simple_similarity,
 )
 
 
@@ -32,123 +31,85 @@ def _make_state(**kwargs) -> dict:
         "sources": [],
         "agent_name": "",
         "original_query": "你好",
+        "from_cache": False,
     }
     defaults.update(kwargs)
     return defaults
 
 
-def _mock_llm_response(content: str):
-    """构造 mock LLM 响应。"""
-    mock_response = MagicMock()
-    mock_response.content = content
-    return mock_response
+# ==================== 规则路由测试 ====================
 
+class TestRuleBasedRouting:
+    """规则路由测试（替代 LLM Supervisor）。"""
 
-# ==================== Supervisor 路由测试 ====================
-
-class TestSupervisorNode:
-    """Supervisor 路由决策测试。"""
-
-    @patch("app.services.agent_graph.get_llm_for_supervisor")
-    def test_supervisor_routes_to_rag_when_kb_selected(self, mock_llm):
-        """有知识库时，LLM 返回 rag → 路由到 RAG Agent。"""
-        mock_llm.return_value.invoke = MagicMock(
-            return_value=_mock_llm_response("rag")
-        )
-
+    @pytest.mark.asyncio
+    async def test_route_to_rag_when_kb_selected(self):
+        """有知识库 → rag"""
         state = _make_state(
             messages=[HumanMessage(content="员工手册里写了什么？")],
             kb_ids=[1, 2],
             original_query="员工手册里写了什么？",
         )
-
-        result = supervisor_node(state)
+        # Mock Store 加载
+        with patch("app.services.agent_graph._load_user_store", return_value={}):
+            with patch("app.services.agent_graph._check_cache", return_value=None):
+                with patch("app.services.agent_graph._get_permitted_kb_ids", return_value=[1, 2]):
+                    result = await prepare_node(state)
         assert result["agent_name"] == "rag"
 
-    @patch("app.services.agent_graph.get_llm_for_supervisor")
-    def test_supervisor_routes_to_general_for_chat(self, mock_llm):
-        """无知识库 + 闲聊，LLM 返回 general → 路由到 General Agent。"""
-        mock_llm.return_value.invoke = MagicMock(
-            return_value=_mock_llm_response("general")
-        )
-
+    @pytest.mark.asyncio
+    async def test_route_to_general_when_no_kb(self):
+        """无知识库 → general"""
         state = _make_state(
             messages=[HumanMessage(content="你好啊")],
             kb_ids=[],
             original_query="你好啊",
         )
-
-        result = supervisor_node(state)
+        with patch("app.services.agent_graph._load_user_store", return_value={}):
+            with patch("app.services.agent_graph._check_cache", return_value=None):
+                with patch("app.services.agent_graph._get_permitted_kb_ids", return_value=[]):
+                    result = await prepare_node(state)
         assert result["agent_name"] == "general"
 
-    @patch("app.services.agent_graph.get_llm_for_supervisor")
-    def test_supervisor_fallback_on_invalid_response(self, mock_llm):
-        """LLM 返回无效内容时，默认回退到 general。"""
-        mock_llm.return_value.invoke = MagicMock(
-            return_value=_mock_llm_response("我不知道")
-        )
-
-        state = _make_state(
-            messages=[HumanMessage(content="随便什么")],
-            kb_ids=[],
-            original_query="随便什么",
-        )
-
-        result = supervisor_node(state)
-        assert result["agent_name"] == "general"
-
-    @patch("app.services.agent_graph.get_llm_for_supervisor")
-    def test_supervisor_fallback_to_rag_when_kb_selected(self, mock_llm):
-        """LLM 返回无效内容但有知识库 → 回退到 rag。"""
-        mock_llm.return_value.invoke = MagicMock(
-            return_value=_mock_llm_response("不确定")
-        )
-
+    @pytest.mark.asyncio
+    async def test_route_to_rag_when_search_all(self):
+        """search_all=True → rag"""
         state = _make_state(
             messages=[HumanMessage(content="相关问题")],
-            kb_ids=[1],
             search_all=True,
             original_query="相关问题",
         )
-
-        result = supervisor_node(state)
+        with patch("app.services.agent_graph._load_user_store", return_value={}):
+            with patch("app.services.agent_graph._check_cache", return_value=None):
+                with patch("app.services.agent_graph._get_permitted_kb_ids", return_value=[1]):
+                    result = await prepare_node(state)
         assert result["agent_name"] == "rag"
 
-    @patch("app.services.agent_graph.get_llm_for_supervisor")
-    def test_supervisor_exception_fallback(self, mock_llm):
-        """LLM 调用异常 → 回退到 general。"""
-        mock_llm.return_value.invoke = MagicMock(
-            side_effect=Exception("LLM 服务不可用")
+    @pytest.mark.asyncio
+    async def test_route_returns_store_data(self):
+        """prepare 应返回 Store 数据"""
+        state = _make_state(
+            store_data={"language": "zh-CN"},
         )
-
-        state = _make_state()
-        result = supervisor_node(state)
-        assert result["agent_name"] == "general"
-
-    @patch("app.services.agent_graph.get_llm_for_supervisor")
-    def test_supervisor_empty_messages(self, mock_llm):
-        """空消息列表 → 默认 general。"""
-        state = _make_state(messages=[])
-        result = supervisor_node(state)
-        assert result["agent_name"] == "general"
+        with patch("app.services.agent_graph._load_user_store", return_value={"language": "zh-CN"}):
+            with patch("app.services.agent_graph._check_cache", return_value=None):
+                with patch("app.services.agent_graph._get_permitted_kb_ids", return_value=[]):
+                    result = await prepare_node(state)
+        assert result["store_data"]["language"] == "zh-CN"
 
 
 # ==================== 路由函数测试 ====================
 
 class TestRouteFunction:
-    """route_after_supervisor 路由函数测试。"""
+    """route_after_prepare 路由函数测试。"""
 
-    def test_route_to_rag(self):
-        state = {"agent_name": "rag"}
-        assert route_after_supervisor(state) == "rag"
+    def test_route_to_generate(self):
+        state = {"from_cache": False}
+        assert route_after_prepare(state) == "generate"
 
-    def test_route_to_general(self):
-        state = {"agent_name": "general"}
-        assert route_after_supervisor(state) == "general"
-
-    def test_route_default_general(self):
-        state = {}
-        assert route_after_supervisor(state) == "general"
+    def test_route_to_postprocess_on_cache(self):
+        state = {"from_cache": True}
+        assert route_after_prepare(state) == "postprocess"
 
 
 # ==================== Memory Retrieval 测试 ====================
@@ -211,103 +172,20 @@ class TestFormatFunctions:
         assert text == ""
 
 
-# ==================== RAG Agent 测试 ====================
+# ==================== 相似度测试 ====================
 
-class TestRAGAgent:
-    """RAG Agent 节点测试。"""
+class TestSimilarity:
+    """相似度函数测试。"""
 
-    @patch("app.services.agent_graph._retrieve_documents")
-    @patch("app.services.agent_graph.get_llm")
-    @pytest.mark.asyncio
-    async def test_rag_agent_returns_answer(self, mock_llm, mock_retrieve):
-        """RAG Agent 应返回带来源的回答。"""
-        mock_retrieve.return_value = {
-            "documents": ["年假5天"],
-            "metadatas": [{"filename": "手册.pdf", "page": 1, "doc_id": 1}],
-            "distances": [0.1],
-        }
-        mock_llm.return_value.invoke = MagicMock(
-            return_value=_mock_llm_response("根据手册，年假为5天。")
-        )
+    def test_identical(self):
+        assert _simple_similarity("年假政策", "年假政策") == 1.0
 
-        state = _make_state(
-            messages=[HumanMessage(content="年假几天？")],
-            kb_ids=[1],
-            original_query="年假几天？",
-        )
+    def test_partial(self):
+        score = _simple_similarity("年假政策说明", "年假有几天")
+        assert 0 < score < 1
 
-        result = await rag_agent_node(state)
-        assert "年假" in result["agent_answer"]
-        assert len(result["sources"]) == 1
-        assert result["sources"][0]["filename"] == "手册.pdf"
-
-    @patch("app.services.agent_graph._retrieve_documents")
-    @patch("app.services.agent_graph.get_llm")
-    @pytest.mark.asyncio
-    async def test_rag_agent_injects_store_data(self, mock_llm, mock_retrieve):
-        """RAG Agent 应注入 Store 状态上下文。"""
-        mock_retrieve.return_value = {"documents": [], "metadatas": [], "distances": []}
-        mock_llm.return_value.invoke = MagicMock(
-            return_value=_mock_llm_response("回答内容")
-        )
-
-        state = _make_state(
-            messages=[HumanMessage(content="问题")],
-            kb_ids=[1],
-            original_query="问题",
-            store_data={"language": "zh-CN", "style": "concise"},
-        )
-
-        result = await rag_agent_node(state)
-        # 验证 LLM 被调用且 prompt 中包含 Store 状态
-        call_args = mock_llm.return_value.ainvoke.call_args
-        prompt_text = call_args[0][0][1].content
-        assert "language" in prompt_text
-
-
-# ==================== General Agent 测试 ====================
-
-class TestGeneralAgent:
-    """General Agent 节点测试。"""
-
-    @patch("app.services.agent_graph.get_llm")
-    @pytest.mark.asyncio
-    async def test_general_agent_returns_answer(self, mock_llm):
-        """General Agent 应返回回答。"""
-        mock_llm.return_value.invoke = MagicMock(
-            return_value=_mock_llm_response("你好！有什么可以帮你的？")
-        )
-
-        state = _make_state(
-            messages=[HumanMessage(content="你好")],
-            original_query="你好",
-        )
-
-        result = await general_agent_node(state)
-        assert "你好" in result["agent_answer"]
-        assert result["sources"] == []
-
-    @patch("app.services.agent_graph.get_llm")
-    @pytest.mark.asyncio
-    async def test_general_agent_with_history(self, mock_llm):
-        """General Agent 应加载对话历史。"""
-        mock_llm.return_value.invoke = MagicMock(
-            return_value=_mock_llm_response("继续讨论")
-        )
-
-        state = _make_state(
-            messages=[
-                HumanMessage(content="第一轮"),
-                AIMessage(content="第一轮回答"),
-                HumanMessage(content="第二轮"),
-            ],
-            original_query="第二轮",
-        )
-
-        result = await general_agent_node(state)
-        call_args = mock_llm.return_value.invoke.call_args
-        prompt_text = call_args[0][0][1].content
-        assert "第一轮" in prompt_text
+    def test_empty(self):
+        assert _simple_similarity("", "test") == 0.0
 
 
 # ==================== 图构建测试 ====================
@@ -319,11 +197,3 @@ class TestGraphBuild:
         """图应能成功编译。"""
         graph = build_agent_graph()
         assert graph is not None
-
-    def test_graph_has_expected_nodes(self):
-        """图应包含所有预期节点。"""
-        graph = build_agent_graph()
-        # 编译后的图有 get_graph() 方法
-        nodes = graph.get_graph().nodes
-        node_names = [n.name if hasattr(n, 'name') else str(n) for n in nodes]
-        assert "supervisor" in node_names or "supervisor" in str(node_names)

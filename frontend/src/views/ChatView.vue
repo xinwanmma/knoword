@@ -58,7 +58,7 @@
           <p>开始提问吧</p>
         </div>
 
-        <div v-for="(msg, idx) in messages" :key="idx">
+        <div v-for="(msg, idx) in parsedMessages" :key="idx">
           <!-- 用户消息 -->
           <div v-if="msg.role === 'user'" class="message-bubble message-user">
             {{ msg.content }}
@@ -100,7 +100,7 @@
             </div>
 
             <!-- 回答内容 -->
-            <div class="message-bubble message-assistant markdown-body" v-html="renderMarkdown(msg.content)" />
+            <div class="message-bubble message-assistant markdown-body" v-html="msg.html" />
           </div>
         </div>
 
@@ -166,11 +166,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { chatAPI, kbAPI } from '../api'
 import { useUserStore } from '../stores/user'
 import { Plus, ChatLineRound, Delete, Document, Promotion, DataLine } from '@element-plus/icons-vue'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { ElMessage } from 'element-plus'
 import MemoryPanel from '../components/MemoryPanel.vue'
 
@@ -195,6 +196,12 @@ const messagesContainer = ref()
 const showMemoryPanel = ref(false)
 let streamController = null
 
+onUnmounted(() => {
+  if (streamController) {
+    streamController.abort()
+  }
+})
+
 onMounted(async () => {
   // 等待用户信息加载完成后再请求
   await userStore.fetchUser().catch(() => {})
@@ -207,14 +214,14 @@ async function loadKnowledgeBases() {
   try {
     const { data } = await kbAPI.list()
     knowledgeBases.value = data
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 
 async function loadConversations() {
   try {
     const { data } = await chatAPI.history()
     conversations.value = data
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 
 async function loadConversation(convId) {
@@ -229,7 +236,7 @@ async function loadConversation(convId) {
       searchMode.value = 'selected'
     }
     scrollToBottom()
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 
 function newChat() {
@@ -246,7 +253,7 @@ async function deleteConversation(convId) {
       newChat()
     }
     ElMessage.success('已删除')
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 
 function sendMessage() {
@@ -328,17 +335,28 @@ function toggleSource(msgIdx, srcIdx) {
 function renderMarkdown(text) {
   if (!text) return ''
   try {
-    return marked.parse(text)
+    return DOMPurify.sanitize(marked.parse(text))
   } catch {
     return text
   }
 }
 
+// 预渲染消息的 HTML（避免每次 re-render 重复解析）
+const parsedMessages = computed(() => {
+  return messages.value.map(msg => ({
+    ...msg,
+    html: msg.role === 'assistant' ? renderMarkdown(msg.content) : null
+  }))
+})
+
+let scrollRAF = null
 function scrollToBottom() {
-  nextTick(() => {
+  if (scrollRAF) return
+  scrollRAF = requestAnimationFrame(() => {
     if (messagesContainer.value) {
       messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
     }
+    scrollRAF = null
   })
 }
 </script>

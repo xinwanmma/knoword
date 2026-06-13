@@ -14,50 +14,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["系统"])
 
 
-async def _check_ollama_running() -> bool:
-    """检查 Ollama 服务是否在运行。"""
-    try:
-        async with httpx.AsyncClient(base_url=settings.OLLAMA_BASE_URL, timeout=5.0) as client:
-            resp = await client.get("/api/tags")
-            return resp.status_code == 200
-    except Exception:
-        return False
-
-
-async def _check_model_installed(model_name: str) -> bool:
-    """通过 /api/tags 检查指定模型是否已安装。"""
-    try:
-        async with httpx.AsyncClient(base_url=settings.OLLAMA_BASE_URL, timeout=10.0) as client:
-            resp = await client.get("/api/tags")
-            resp.raise_for_status()
-            data = resp.json()
-            installed_models = [m.get("name", "") for m in data.get("models", [])]
-            # 模型名可能带 :latest 后缀，也可能是精确匹配
-            return any(
-                model_name == m or model_name + ":latest" == m
-                for m in installed_models
-            )
-    except Exception as e:
-        logger.warning(f"检查模型 {model_name} 安装状态失败: {e}")
-        return False
-
-
-async def _check_embedding_model() -> bool:
-    """通过实际 embedding 调用检查 embedding 模型是否可用。"""
-    try:
-        async with httpx.AsyncClient(base_url=settings.OLLAMA_BASE_URL, timeout=15.0) as client:
-            resp = await client.post(
-                "/api/embeddings",
-                json={"model": settings.OLLAMA_EMBED_MODEL, "prompt": "test"},
-            )
-            return resp.status_code == 200
-    except Exception:
-        return False
-
-
 @router.get("/health")
 async def health_check():
-    """检查所有依赖服务是否可用。"""
+    """检查所有依赖服务是否可用（复用单个 httpx client）。"""
     checks = {}
 
     # 检查 PostgreSQL
@@ -71,15 +30,37 @@ async def health_check():
     # 检查 ChromaDB
     checks["chromadb"] = check_chromadb()
 
-    # 检查 Ollama 服务是否在运行
-    ollama_running = await _check_ollama_running()
+    # 检查 Ollama（单次连接，复用 client）
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.OLLAMA_BASE_URL, timeout=10.0
+        ) as client:
+            # 一次 /api/tags 同时检查服务 + 模型列表
+            tags_resp = await client.get("/api/tags")
+            ollama_running = tags_resp.status_code == 200
 
-    if ollama_running:
-        # 检查 LLM 模型是否已安装（用 /api/tags 检查）
-        checks["ollama_llm"] = await _check_model_installed(settings.OLLAMA_LLM_MODEL)
-        # 检查 Embedding 模型是否可用（用 /api/embeddings 实际调用）
-        checks["ollama_embed"] = await _check_embedding_model()
-    else:
+            if ollama_running:
+                data = tags_resp.json()
+                installed = {m.get("name", "") for m in data.get("models", [])}
+                checks["ollama_llm"] = any(
+                    settings.OLLAMA_LLM_MODEL == m
+                    or settings.OLLAMA_LLM_MODEL + ":latest" == m
+                    for m in installed
+                )
+                # Embedding 用同一个 client 检查
+                try:
+                    embed_resp = await client.post(
+                        "/api/embeddings",
+                        json={"model": settings.OLLAMA_EMBED_MODEL, "prompt": "test"},
+                        timeout=15.0,
+                    )
+                    checks["ollama_embed"] = embed_resp.status_code == 200
+                except Exception:
+                    checks["ollama_embed"] = False
+            else:
+                checks["ollama_llm"] = False
+                checks["ollama_embed"] = False
+    except Exception:
         checks["ollama_llm"] = False
         checks["ollama_embed"] = False
 

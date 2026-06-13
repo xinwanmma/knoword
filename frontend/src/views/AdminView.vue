@@ -81,7 +81,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import { kbAPI, categoryAPI, adminAPI } from '../api'
 import api from '../api'
 import { Plus } from '@element-plus/icons-vue'
@@ -95,23 +95,28 @@ const newCatName = ref('')
 const stats = reactive({ kbCount: 0, docCount: 0, userCount: 0 })
 
 onMounted(() => {
-  loadAll()
+  loadTabData(activeTab.value)
 })
 
-async function loadAll() {
+watch(activeTab, (tab) => {
+  loadTabData(tab)
+})
+
+async function loadTabData(tab) {
   try {
-    const [usersRes, kbRes, catRes] = await Promise.all([
-      adminAPI.listUsers(),
-      kbAPI.list(),
-      categoryAPI.list(),
-    ])
-    users.value = usersRes.data
-    categories.value = catRes.data
-    stats.kbCount = kbRes.data.length
-    stats.userCount = usersRes.data.length
-    // 计算所有知识库的文档总数
-    stats.docCount = kbRes.data.reduce((sum, kb) => sum + (kb.document_count || 0), 0)
-  } catch { /* noop */ }
+    if (tab === 'users' && users.value.length === 0) {
+      const { data } = await adminAPI.listUsers()
+      users.value = data
+      stats.userCount = data.length
+    } else if (tab === 'categories' && categories.value.length === 0) {
+      const { data } = await categoryAPI.list()
+      categories.value = data
+    } else if (tab === 'stats') {
+      const { data: kbRes } = await kbAPI.list()
+      stats.kbCount = kbRes.length
+      stats.docCount = kbRes.reduce((sum, kb) => sum + (kb.document_count || 0), 0)
+    }
+  } catch (err) { console.error(err) }
 }
 
 async function toggleAdmin(user) {
@@ -125,7 +130,7 @@ async function toggleAdmin(user) {
     const { data } = await adminAPI.toggleAdmin(user.id)
     ElMessage.success(data.message)
     await loadAll()
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 
 function showCategoryDialog() {
@@ -144,7 +149,7 @@ async function createCategory() {
     catDialogVisible.value = false
     const { data } = await categoryAPI.list()
     categories.value = data
-  } catch { /* noop */ }
+  } catch (err) { console.error(err) }
 }
 
 function formatDate(dateStr) {

@@ -1,7 +1,6 @@
-"""Ollama 服务调用封装 — embedding 和 chat 生成。"""
+"""Ollama 服务调用封装 — embedding 调用。"""
 
 import logging
-from typing import AsyncGenerator
 
 import httpx
 
@@ -72,55 +71,6 @@ async def get_embedding(text: str, retries: int = 1) -> list[float]:
                 raise RuntimeError(f"Ollama embedding 异常: {e}")
 
     raise RuntimeError("Embedding 请求失败，已达最大重试次数")
-
-
-async def chat_stream(
-    messages: list[dict],
-    model: str | None = None,
-) -> AsyncGenerator[str, None]:
-    """流式调用 Ollama chat API，逐 token 返回。
-
-    Args:
-        messages: [{"role": "user", "content": "..."}, ...]
-        model: 模型名称，默认使用配置中的 LLM 模型
-
-    Yields:
-        每次生成的 token 字符串
-    """
-    client = await _get_client()
-    model = model or settings.OLLAMA_LLM_MODEL
-
-    try:
-        async with client.stream(
-            "POST",
-            "/api/chat",
-            json={
-                "model": model,
-                "messages": messages,
-                "stream": True,
-            },
-            timeout=120.0,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if line.strip():
-                    import json
-                    try:
-                        data = json.loads(line)
-                        if "message" in data:
-                            token = data["message"].get("content", "")
-                            if token:
-                                yield token
-                        if data.get("done", False):
-                            break
-                    except json.JSONDecodeError:
-                        continue
-    except httpx.TimeoutException:
-        logger.error("Chat 请求超时 (120s)")
-        raise RuntimeError("LLM 生成超时，请稍后重试")
-    except Exception as e:
-        logger.error(f"Chat 请求异常: {e}")
-        raise RuntimeError(f"LLM 生成失败: {e}")
 
 
 async def check_ollama_model(model: str) -> bool:

@@ -53,15 +53,24 @@ async def process_document(doc_id: int, file_path: str):
                 await db.commit()
                 return
 
-            # 步骤 3：生成 embedding
-            logger.info(f"[doc_{doc_id}] 开始生成 embedding...")
+            # 步骤 3：并发生成 embedding
+            logger.info(f"[doc_{doc_id}] 开始生成 embedding ({len(chunks)} chunks)...")
+            import asyncio
+
+            semaphore = asyncio.Semaphore(4)
+
+            async def _embed_with_limit(chunk):
+                async with semaphore:
+                    return await get_embedding(chunk.text, retries=1)
+
+            embeddings_list = await asyncio.gather(*[_embed_with_limit(c) for c in chunks])
+
             ids = []
             documents = []
             embeddings = []
             metadatas = []
 
-            for chunk in chunks:
-                embedding = await get_embedding(chunk.text, retries=1)
+            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings_list)):
                 vector_id = _make_vector_id(doc.kb_id, doc.id, chunk.chunk_index)
                 ids.append(vector_id)
                 documents.append(chunk.text)

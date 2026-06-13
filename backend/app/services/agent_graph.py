@@ -12,6 +12,7 @@
 
 import hashlib
 import logging
+import re
 import time
 from typing import Annotated, TypedDict
 
@@ -24,6 +25,9 @@ from langgraph.graph.message import add_messages
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# 预编译正则
+_WORD_PATTERN = re.compile(r'[\u4e00-\u9fff]+|\w+')
 
 
 # ==================== State 定义 ====================
@@ -49,14 +53,33 @@ class AgentState(TypedDict):
 
 # ==================== Store 功能 ====================
 
+# Store 内存缓存（60 秒 TTL）
+_store_cache: dict[str, tuple[float, dict]] = {}
+_STORE_CACHE_TTL = 60  # 秒
+
+
 async def _load_user_store(user_id: str) -> dict:
-    """加载用户 Store 数据（profile + user 命名空间合并）。"""
+    """加载用户 Store 数据（带内存缓存）。"""
+    import time
+    now = time.time()
+
+    # 检查缓存
+    if user_id in _store_cache:
+        cached_time, cached_data = _store_cache[user_id]
+        if now - cached_time < _STORE_CACHE_TTL:
+            return cached_data
+
+    # 从数据库加载
     from app.db.database import async_session_factory
     from app.services.store_service import store_get_all
 
     async with async_session_factory() as db:
         entries = await store_get_all(db, user_id)
-    return {e["key"]: e["value"] for e in entries}
+    result = {e["key"]: e["value"] for e in entries}
+
+    # 写入缓存
+    _store_cache[user_id] = (now, result)
+    return result
 
 
 async def _check_cache(user_id: str, query: str) -> dict | None:
@@ -116,9 +139,8 @@ def _simple_similarity(a: str, b: str) -> float:
     """简单的关键词重叠相似度。"""
     if not a or not b:
         return 0.0
-    import re
-    words_a = set(re.findall(r'[\u4e00-\u9fff]+|\w+', a.lower()))
-    words_b = set(re.findall(r'[\u4e00-\u9fff]+|\w+', b.lower()))
+    words_a = set(_WORD_PATTERN.findall(a.lower()))
+    words_b = set(_WORD_PATTERN.findall(b.lower()))
     if not words_a or not words_b:
         return 0.0
     return len(words_a & words_b) / max(len(words_a), len(words_b))
@@ -157,9 +179,24 @@ async def _get_permitted_kb_ids(user_id: str, requested_kb_ids: list[int], searc
 
 
 async def _auto_extract_and_save(user_id: str, query: str, answer: str):
-    """对话后自动提取用户偏好并存入 Store。"""
+    """对话后自动提取用户偏好并存入 Store（带节流）。"""
     if not settings.STORE_ENABLED or not settings.STORE_AUTO_EXTRACT:
         return
+
+    # 节流：短消息不提取
+    if len(query) < 15:
+        return
+
+    # 节流：每用户每 5 分钟最多一次
+    import time
+    now = time.time()
+    _extract_key = f"_last_extract_{user_id}"
+    if hasattr(_auto_extract_and_save, '_last_run'):
+        if _auto_extract_and_save._last_run.get(_extract_key, 0) > now - 300:
+            return
+    else:
+        _auto_extract_and_save._last_run = {}
+    _auto_extract_and_save._last_run[_extract_key] = now
 
     try:
         from app.core.llm import get_llm_for_supervisor
@@ -322,7 +359,6 @@ async def prepare_node(state: AgentState) -> dict:
     has_kb = bool(permitted_kb_ids) or search_all
     agent_name = "rag" if has_kb else "general"
 
-    logger.info(f"Prepare done: agent={agent_name}, cache=False, kb={len(permitted_kb_ids)}")
     sources = []
     search_results = None
     if agent_name == "rag" and (permitted_kb_ids or search_all):

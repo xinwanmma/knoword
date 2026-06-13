@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # ==================== 用户 ====================
@@ -111,6 +111,12 @@ class ChatRequest(BaseModel):
     kb_ids: list[int] = []
     search_all: bool = False
     conversation_id: Optional[str] = None
+
+    @field_validator('query')
+    @classmethod
+    def sanitize_query(cls, v: str) -> str:
+        """去除控制字符，保留换行。"""
+        return ''.join(c for c in v if c.isprintable() or c in '\n\r\t').strip()
 
 
 class SourceOut(BaseModel):

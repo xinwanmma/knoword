@@ -5,7 +5,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, Integer, String, DateTime, Text, Index
 from sqlalchemy.dialects.postgresql import JSONB
@@ -28,7 +28,7 @@ class UserStore(Base):
     namespace = Column(String(100), nullable=False, default="default")
     key = Column(String(200), nullable=False)
     value = Column(JSONB, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index("idx_store_user_ns_key", "user_id", "namespace", "key", unique=True),
@@ -56,7 +56,7 @@ async def store_put(
 
     if existing:
         existing.value = value if isinstance(value, (dict, list)) else {"data": value}
-        existing.updated_at = datetime.utcnow()
+        existing.updated_at = datetime.now(timezone.utc)
     else:
         entry = UserStore(
             user_id=user_id,

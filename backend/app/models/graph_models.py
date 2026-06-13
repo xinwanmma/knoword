@@ -17,8 +17,8 @@ class GraphEntity(Base):
     name = Column(String(200), nullable=False)
     entity_type = Column(String(50), default="UNKNOWN")
     mention_count = Column(Integer, default=1)
-    last_mentioned = Column(DateTime, default=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    last_mentioned = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index("idx_entity_user_name", "user_id", "name", unique=True),
@@ -34,8 +34,8 @@ class GraphRelation(Base):
     source_name = Column(String(200), nullable=False)
     relation_type = Column(String(100), nullable=False)
     target_name = Column(String(200), nullable=False)
-    last_updated = Column(DateTime, default=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index("idx_relation_user", "user_id", "source_name", "target_name"),

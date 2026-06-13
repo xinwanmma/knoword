@@ -251,13 +251,16 @@ async def _postprocess(user_id: str, query: str, answer: str):
 async def list_conversations(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    limit: int = 50,
+    offset: int = 0,
 ):
-    """获取当前用户的会话列表。"""
+    """获取当前用户的会话列表（分页）。"""
     result = await db.execute(
         select(Conversation)
         .where(Conversation.user_id == current_user.id)
         .order_by(desc(Conversation.created_at))
-        .limit(50)
+        .offset(offset)
+        .limit(min(limit, 100))
     )
     convs = result.scalars().all()
     return [ConversationOut.model_validate(c) for c in convs]

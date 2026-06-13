@@ -7,25 +7,12 @@
 """
 
 import logging
-from dataclasses import dataclass
-
-import httpx
 
 from app.config import settings
 from app.services.ollama_service import get_embedding
 from app.services.vectorstore import search_documents
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class HybridSearchResult:
-    """混合检索结果。"""
-    ids: list[str]
-    documents: list[str]
-    metadatas: list[dict]
-    scores: list[float]
-    sources: list[str]  # "vector" / "bm25" / "both"
 
 
 def _tokenize_chinese(text: str) -> list[str]:

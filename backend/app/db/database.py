@@ -11,6 +11,9 @@ engine = create_async_engine(
     echo=settings.DEBUG,
     pool_size=20,
     max_overflow=10,
+    pool_recycle=1800,
+    pool_pre_ping=True,
+    pool_timeout=30,
 )
 
 # 创建异步会话工厂
@@ -31,6 +34,10 @@ async def get_db() -> AsyncSession:
     async with async_session_factory() as session:
         try:
             yield session
+        except Exception:
+            if session.is_active:
+                await session.rollback()
+            raise
         finally:
             await session.close()
 

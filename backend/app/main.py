@@ -28,6 +28,11 @@ async def _create_default_admin():
     from app.models.models import User
     from app.core.security import hash_password
 
+    # 未设置密码则跳过
+    if not settings.ADMIN_PASSWORD:
+        logger.warning("ADMIN_PASSWORD 未设置，跳过默认管理员创建")
+        return
+
     async with async_session_factory() as db:
         # 检查是否已有管理员
         result = await db.execute(select(User).where(User.is_admin == True))
@@ -90,9 +95,9 @@ app = FastAPI(
 # CORS 中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS.split(","),
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
