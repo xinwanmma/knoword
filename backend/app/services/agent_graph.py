@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 # 预编译正则
 _WORD_PATTERN = re.compile(r'[\u4e00-\u9fff]+|\w+')
 
-# 自动记忆提取节流记录
-_auto_extract_and_save._last_run: dict[str, float] = {}
+# 自动记忆提取节流记录 {f"_last_extract_{user_id}": timestamp}
+_auto_extract_last_run: dict[str, float] = {}
 
 
 # ==================== State 定义 ====================
@@ -205,7 +205,7 @@ async def _auto_extract_and_save(user_id: str, query: str, answer: str):
     # 节流：每用户每 5 分钟最多一次
     now = time.time()
     _extract_key = f"_last_extract_{user_id}"
-    last_run = _auto_extract_and_save._last_run.get(_extract_key, 0)
+    last_run = _auto_extract_last_run.get(_extract_key, 0)
     if now - last_run < 300:
         return
 
@@ -244,7 +244,7 @@ async def _auto_extract_and_save(user_id: str, query: str, answer: str):
         logger.error(f"Auto-extract failed: {e}")
     else:
         # LLM 调用成功后才更新节流时间
-        _auto_extract_and_save._last_run[_extract_key] = now
+        _auto_extract_last_run[_extract_key] = now
 
 
 # ==================== 准备函数 ====================
