@@ -5,10 +5,14 @@
 ## ✨ 功能
 
 - **多 Agent 路由** — LangGraph Supervisor 自动判断意图，路由到 RAG 或 General Agent
+- **真实流式** — llm.astream() 逐 token 输出，非模拟
 - **Checkpointer** — LangGraph 状态持久化，对话断点续传
-- **Store** — PostgreSQL JSONB 键值存储，保存用户偏好/进度/自定义状态
+- **Store** — PostgreSQL JSONB 键值存储：
+  - 用户画像自动提取（AI 主动记住你的偏好）
+  - 问答缓存（相似问题毫秒级返回）
+  - 文档权限过滤（企业级多租户 RAG）
 - **RAG 检索** — Hybrid Search（BM25 + 向量）+ Reranking + 中文优化分块
-- **流式对话** — SSE 逐 token 输出，引用来源先行渲染
+- **流式对话** — SSE 逐 token 输出，引用来源先行渲染，进度指示器
 
 ## 🛠 技术栈
 
@@ -29,8 +33,6 @@
 ```bash
 start.bat
 ```
-
-自动检查环境 → 安装依赖 → 启动后端(:8000) + 前端(:3000)
 
 ### 手动启动
 
@@ -74,7 +76,7 @@ backend/
 ├── app/
 │   ├── api/
 │   │   ├── auth.py             # 认证
-│   │   ├── chat.py             # 对话（LangGraph + SSE）
+│   │   ├── chat.py             # 对话（LangGraph + 真实流式）
 │   │   ├── chunk_config.py     # 分块策略预览
 │   │   ├── documents.py        # 文档管理
 │   │   ├── health.py           # 健康检查
@@ -84,17 +86,30 @@ backend/
 │   │   ├── embeddings.py       # OllamaEmbeddings
 │   │   ├── llm.py              # ChatOllama
 │   │   └── security.py         # JWT + 权限
+│   ├── middleware/
+│   │   └── logging.py          # 请求日志
+│   ├── models/
+│   │   └── models.py           # ORM 模型
+│   ├── schemas/
+│   │   └── schemas.py          # Pydantic 模式
 │   ├── services/
-│   │   ├── agent_graph.py      # ⭐ LangGraph 多 Agent 图
+│   │   ├── agent_graph.py      # ⭐ LangGraph Agent 图
 │   │   ├── chunker.py          # 中文优化分块
+│   │   ├── chunk_config.py     # 分块策略配置
 │   │   ├── checkpoint_service.py  # Checkpointer
+│   │   ├── document_processor.py  # 文档处理管道
 │   │   ├── hybrid_search.py    # BM25 + 向量混合检索
+│   │   ├── memory_service.py   # (已移除)
+│   │   ├── graph_memory.py     # (已移除)
+│   │   ├── ollama_service.py   # Ollama 原生调用
+│   │   ├── parser.py           # 9 格式文档解析
 │   │   ├── reranker.py         # Reranking
 │   │   ├── store_service.py    # Store 服务
 │   │   └── vectorstore.py      # ChromaDB
 │   ├── config.py
 │   └── main.py
 ├── tests/
+├── alembic/
 └── requirements.txt
 
 frontend/
@@ -102,11 +117,49 @@ frontend/
 │   ├── api/index.js
 │   ├── components/MemoryPanel.vue  # Store 管理面板
 │   ├── views/ChatView.vue          # 对话页
-│   └── views/KnowledgeBaseView.vue # 知识库管理
+│   ├── views/KnowledgeBaseView.vue # 知识库管理
+│   ├── views/AdminView.vue         # 管理员面板
+│   ├── views/StatusView.vue        # 系统状态
+│   ├── views/LoginView.vue         # 登录
+│   └── views/RegisterView.vue      # 注册
 └── package.json
 
 start.bat              # 一键启动
 docker-compose.yml     # PostgreSQL + ChromaDB
+```
+
+## 🧠 记忆系统
+
+```
+对话流程：
+1. prepare（非流式）：加载 Store → 检查缓存 → Supervisor 路由 → 检索文档
+2. generate（真流式）：llm.astream() 逐 token 输出
+3. postprocess（异步）：保存缓存 + 自动提取用户偏好
+```
+
+### Store 功能
+
+| 功能 | 说明 | 存储位置 |
+|------|------|---------|
+| 用户画像 | AI 自动提取对话中的偏好 | `profile_*` 键 |
+| 问答缓存 | 相似问题直接返回缓存 | `cache_*` 键 |
+| 权限过滤 | 用户有权限的知识库列表 | `permissions` 键 |
+| 自定义状态 | 用户手动设置的偏好 | 任意键 |
+
+### Store API
+
+```bash
+# 保存
+curl -X PUT http://localhost:8000/api/store \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"language","value":"中文"}'
+
+# 读取
+curl http://localhost:8000/api/store/language -H "Authorization: Bearer $TOKEN"
+
+# 列出
+curl http://localhost:8000/api/store -H "Authorization: Bearer $TOKEN"
 ```
 
 ## ⚙️ 配置
@@ -117,10 +170,11 @@ docker-compose.yml     # PostgreSQL + ChromaDB
 |------|--------|------|
 | `OLLAMA_LLM_MODEL` | `qwen3.5:2b` | 对话模型 |
 | `OLLAMA_EMBED_MODEL` | `qwen3-embedding:0.6b` | 向量模型 |
-| `STORE_ENABLED` | `true` | 启用 Store 状态 |
+| `STORE_ENABLED` | `true` | 启用 Store |
+| `STORE_CACHE_TTL_DAYS` | `30` | 缓存过期天数 |
+| `STORE_CACHE_SIMILARITY_THRESHOLD` | `0.9` | 缓存相似度阈值 |
+| `STORE_AUTO_EXTRACT` | `true` | 自动提取用户偏好 |
 | `CHUNK_TARGET_TOKENS` | `300` | 目标分块大小 |
-| `ADMIN_USERNAME` | `admin` | 管理员用户名 |
-| `ADMIN_PASSWORD` | `000` | 管理员密码（必须修改） |
 | `DEBUG` | `false` | 调试模式 |
 
 ## License
