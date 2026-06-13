@@ -28,7 +28,7 @@ class UserStore(Base):
     namespace = Column(String(100), nullable=False, default="default")
     key = Column(String(200), nullable=False)
     value = Column(JSONB, nullable=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         Index("idx_store_user_ns_key", "user_id", "namespace", "key", unique=True),
