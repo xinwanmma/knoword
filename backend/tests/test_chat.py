@@ -44,10 +44,19 @@ class TestHealthCheck:
     @pytest.mark.asyncio
     async def test_health_returns_status(self, client):
         """健康检查应返回 status 和 services。"""
-        with patch("app.api.health._check_ollama_running", return_value=True), \
-             patch("app.api.health._check_model_installed", return_value=True), \
-             patch("app.api.health._check_embedding_model", return_value=True), \
-             patch("app.api.health.check_chromadb", return_value=True):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"models": [{"name": "qwen3.5:2b"}, {"name": "qwen3-embedding:0.6b"}]}
+
+        with patch("httpx.AsyncClient") as MockClient, \
+             patch("app.services.vectorstore.check_chromadb", return_value=True):
+            instance = AsyncMock()
+            instance.get.return_value = mock_response
+            instance.post.return_value = mock_response
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
             resp = await client.get("/api/health")
             assert resp.status_code == 200
             data = resp.json()
@@ -193,8 +202,8 @@ class TestChatFlow:
              patch("app.services.vectorstore.search_documents", return_value={
                  "documents": [], "metadatas": [], "distances": [],
              }), \
-             patch("app.services.agent_graph.get_llm") as mock_llm, \
-             patch("app.services.agent_graph.get_llm_for_supervisor") as mock_supervisor:
+             patch("app.core.llm.get_llm") as mock_llm, \
+             patch("app.core.llm.get_llm_for_supervisor") as mock_supervisor:
 
             # Mock Supervisor 返回 general
             mock_supervisor.return_value.invoke = MagicMock(
@@ -229,8 +238,8 @@ class TestChatFlow:
                  "metadatas": [{"filename": "手册.pdf", "page": 1, "doc_id": 1}],
                  "distances": [0.1],
              }), \
-             patch("app.services.agent_graph.get_llm") as mock_llm, \
-             patch("app.services.agent_graph.get_llm_for_supervisor") as mock_supervisor:
+             patch("app.core.llm.get_llm") as mock_llm, \
+             patch("app.core.llm.get_llm_for_supervisor") as mock_supervisor:
 
             mock_supervisor.return_value.invoke = MagicMock(
                 return_value=MagicMock(content="rag")
@@ -259,8 +268,8 @@ class TestChatFlow:
              patch("app.services.vectorstore.search_documents", return_value={
                  "documents": [], "metadatas": [], "distances": [],
              }), \
-             patch("app.services.agent_graph.get_llm") as mock_llm, \
-             patch("app.services.agent_graph.get_llm_for_supervisor") as mock_supervisor:
+             patch("app.core.llm.get_llm") as mock_llm, \
+             patch("app.core.llm.get_llm_for_supervisor") as mock_supervisor:
 
             mock_supervisor.return_value.invoke = MagicMock(
                 return_value=MagicMock(content="general")

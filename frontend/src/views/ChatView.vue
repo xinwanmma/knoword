@@ -501,6 +501,18 @@ function scrollToBottom() {
   margin-bottom: 4px;
 }
 
+.source-content {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #606266;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  margin-top: 4px;
+}
+
 .source-full {
   margin-top: 6px;
   color: #303133;

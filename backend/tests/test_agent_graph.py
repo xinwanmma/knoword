@@ -9,9 +9,8 @@ from app.services.agent_graph import (
     build_agent_graph,
     prepare_node,
     route_after_prepare,
-    memory_retrieval_node,
     _format_sources_text,
-    _format_memories_text,
+    _format_store_text,
     _simple_similarity,
 )
 
@@ -158,17 +157,17 @@ class TestFormatFunctions:
         text = _format_sources_text({"documents": []})
         assert "无相关参考资料" in text
 
-    def test_format_memories_store(self):
+    def test_format_store_data(self):
         """Store 数据正确格式化。"""
-        text = _format_memories_text(
-            store_data={"language": "zh", "style": "concise"},
+        text = _format_store_text(
+            {"language": "zh", "style": "concise"},
         )
         assert "language" in text
         assert "concise" in text
 
-    def test_format_memories_empty(self):
+    def test_format_store_empty(self):
         """无 Store 数据时返回空字符串。"""
-        text = _format_memories_text({})
+        text = _format_store_text({})
         assert text == ""
 
 

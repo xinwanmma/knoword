@@ -86,7 +86,7 @@ async def store_get(
     entry = result.scalar_one_or_none()
     if entry is None:
         return None
-    return {"key": entry.key, "value": entry.value, "updated_at": entry.updated_at.isoformat()}
+    return {"key": entry.key, "namespace": entry.namespace, "value": entry.value, "updated_at": entry.updated_at.isoformat()}
 
 
 async def store_get_all(

@@ -45,8 +45,13 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const userStore = useUserStore()
+
+  // 如果有 token 但 user 还没加载，先 fetchUser
+  if (userStore.isLoggedIn && !userStore.user) {
+    await userStore.fetchUser()
+  }
 
   if (to.meta.requiresAuth && !userStore.isLoggedIn) {
     next('/login')

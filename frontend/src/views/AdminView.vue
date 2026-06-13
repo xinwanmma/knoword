@@ -129,7 +129,7 @@ async function toggleAdmin(user) {
     )
     const { data } = await adminAPI.toggleAdmin(user.id)
     ElMessage.success(data.message)
-    await loadAll()
+    await loadTabData('users')
   } catch (err) { console.error(err) }
 }
 

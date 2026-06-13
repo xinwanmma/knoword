@@ -473,13 +473,16 @@ def route_after_prepare(state: AgentState) -> str:
 # ==================== 构建图 ====================
 
 def build_agent_graph():
-    """构建 LangGraph StateGraph。"""
+    """构建 LangGraph StateGraph。
+
+    只包含 prepare 和 postprocess 节点。
+    generate（流式 LLM 生成）在 chat.py 中直接处理。
+    """
     from app.services.checkpoint_service import get_checkpointer
 
     graph = StateGraph(AgentState)
 
     graph.add_node("prepare", prepare_node)
-    graph.add_node("generate", generate_node)
     graph.add_node("postprocess", postprocess_node)
 
     graph.add_edge(START, "prepare")
@@ -488,12 +491,11 @@ def build_agent_graph():
         "prepare",
         route_after_prepare,
         {
-            "generate": "generate",
-            "postprocess": "postprocess",
+            "postprocess": "postprocess",  # 缓存命中
+            "generate": "postprocess",     # 正常流程，chat.py 直接处理 generate
         },
     )
 
-    graph.add_edge("generate", "postprocess")
     graph.add_edge("postprocess", END)
 
     checkpointer = get_checkpointer()
