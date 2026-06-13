@@ -83,7 +83,20 @@ async def health_check():
         checks["ollama_llm"] = False
         checks["ollama_embed"] = False
 
-    all_ok = all(checks.values())
+    # 检查 Neo4j
+    if settings.MEMARY_ENABLED:
+        try:
+            from neo4j import GraphDatabase
+            driver = GraphDatabase.driver(settings.NEO4J_URL, auth=("neo4j", settings.NEO4J_PW))
+            driver.verify_connectivity()
+            driver.close()
+            checks["neo4j"] = True
+        except Exception:
+            checks["neo4j"] = False
+    else:
+        checks["neo4j"] = None  # 未启用
+
+    all_ok = all(v for v in checks.values() if v is not None)
     return {
         "status": "ok" if all_ok else "degraded",
         "services": checks,

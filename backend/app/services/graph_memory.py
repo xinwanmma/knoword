@@ -38,6 +38,11 @@ def _get_driver():
         return _driver
     except Exception as e:
         logger.error(f"❌ Neo4j 连接失败: {e}")
+        logger.error(
+            "请确保 Neo4j 已启动: docker run -d --name rag_neo4j "
+            "-p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password "
+            "-v neo4j_data:/data neo4j:5-community"
+        )
         return None
 
 
