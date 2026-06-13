@@ -217,7 +217,7 @@ async function loadConversations() {
   } catch { /* noop */ }
 }
 
-async def loadConversation(convId) {
+async function loadConversation(convId) {
   currentConvId.value = convId
   try {
     const { data } = await chatAPI.getMessages(convId)
