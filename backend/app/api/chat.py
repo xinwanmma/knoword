@@ -4,6 +4,7 @@ import json
 import uuid
 import asyncio
 import logging
+from typing import Set
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -21,6 +22,9 @@ from app.services.agent_graph import get_compiled_graph
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["对话"])
+
+# 持有后台 Task 引用，防止 GC 回收
+_background_tasks: Set[asyncio.Task] = set()
 
 
 def _sse_event(event: str, data) -> str:
@@ -142,13 +146,6 @@ async def chat(
                 if sources_data:
                     yield _sse_event("sources", sources_data)
 
-                # 重新构建完整状态用于 generate
-                generate_state = {
-                    **initial_state,
-                    **prepare_result,
-                    "messages": all_messages,
-                }
-
                 # 直接调用 llm.astream 实现真流式
                 agent_name = prepare_result.get("agent_name", "general")
                 store_data = prepare_result.get("store_data", {})
@@ -182,9 +179,11 @@ async def chat(
                         await asyncio.sleep(0)
 
                 # 7. 异步后处理（缓存 + 自动记忆）
-                asyncio.create_task(_postprocess(
+                task = asyncio.create_task(_postprocess(
                     str(current_user.id), req.query, full_answer
                 ))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
 
             # 8. 保存对话到数据库
             from app.db.database import async_session_factory

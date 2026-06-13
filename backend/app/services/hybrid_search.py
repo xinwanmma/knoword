@@ -37,12 +37,13 @@ def _tokenize_chinese(text: str) -> list[str]:
     return [t for t in tokens if t.strip()]
 
 
-def _bm25_score(query_tokens: list[str], doc_tokens: list[str], k1: float = 1.5, b: float = 0.75) -> float:
+def _bm25_score(query_tokens: list[str], doc_tokens: list[str], avg_dl: float = 1.0, k1: float = 1.5, b: float = 0.75) -> float:
     """简化版 BM25 评分。
 
     Args:
         query_tokens: 查询分词
         doc_tokens: 文档分词
+        avg_dl: 语料库平均文档长度
         k1: 词频饱和参数
         b: 文档长度归一化参数
 
@@ -53,7 +54,7 @@ def _bm25_score(query_tokens: list[str], doc_tokens: list[str], k1: float = 1.5,
 
     doc_counter = Counter(doc_tokens)
     doc_len = len(doc_tokens)
-    avg_dl = max(doc_len, 1)  # 简化：不计算全局平均
+    avg_dl = max(avg_dl, 1)
 
     score = 0.0
     for qt in query_tokens:
@@ -114,10 +115,16 @@ async def hybrid_search(
     vector_scores = [s / max_vs if max_vs > 0 else 0 for s in vector_scores]
 
     # BM25 评分
-    bm25_scores = []
+    doc_token_lists = []
     for doc in vector_results["documents"]:
-        doc_tokens = _tokenize_chinese(doc)
-        bm25_scores.append(_bm25_score(query_tokens, doc_tokens))
+        doc_token_lists.append(_tokenize_chinese(doc))
+
+    # 计算全局平均文档长度用于归一化
+    avg_dl = sum(len(dt) for dt in doc_token_lists) / max(len(doc_token_lists), 1)
+
+    bm25_scores = []
+    for doc_tokens in doc_token_lists:
+        bm25_scores.append(_bm25_score(query_tokens, doc_tokens, avg_dl=avg_dl))
 
     max_bs = max(bm25_scores) if bm25_scores else 1.0
     bm25_scores = [s / max_bs if max_bs > 0 else 0 for s in bm25_scores]

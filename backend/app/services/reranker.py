@@ -115,8 +115,8 @@ async def rerank_with_score_fusion(
     import re
     from collections import Counter
 
-    # 查询关键词
-    query_chars = set(re.findall(r'[\u4e00-\u9fff]+', query))
+    # 查询关键词（中文按单字拆分，英文按单词拆分）
+    query_chars = set(re.findall(r'[\u4e00-\u9fff]', query))
     query_words = set(re.findall(r'\w+', query))
     query_terms = query_chars | query_words
 
@@ -126,17 +126,16 @@ async def rerank_with_score_fusion(
         original_score = doc.get("score", doc.get("rerank_score", 0.5))
 
         # 关键词匹配分数
-        text_chars = set(re.findall(r'[\u4e00-\u9fff]+', text))
+        text_chars = set(re.findall(r'[\u4e00-\u9fff]', text))
         text_words = set(re.findall(r'\w+', text))
         text_terms = text_chars | text_words
 
         overlap = len(query_terms & text_terms)
         keyword_score = min(overlap / max(len(query_terms), 1), 1.0)
 
-        # 融合分数
+        # 融合分数（不修改原始 dict）
         fused = original_weight * original_score + keyword_weight * keyword_score
-        doc["rerank_score"] = round(fused, 4)
-        results.append(doc)
+        results.append({**doc, "rerank_score": round(fused, 4)})
 
     # 排序
     results.sort(key=lambda x: x["rerank_score"], reverse=True)

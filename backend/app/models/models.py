@@ -20,7 +20,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     is_admin = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     knowledge_bases = relationship("KnowledgeBase", back_populates="owner")
     conversations = relationship("Conversation", back_populates="user")
@@ -44,7 +44,7 @@ class KnowledgeBase(Base):
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     is_global = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     owner = relationship("User", back_populates="knowledge_bases")
     category = relationship("Category", back_populates="knowledge_bases")
@@ -62,7 +62,7 @@ class Document(Base):
     chunk_count = Column(Integer, default=0)
     status = Column(String(20), default="processing")  # processing / ready / failed
     error = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
 
@@ -74,7 +74,7 @@ class Conversation(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     title = Column(String(200), default="新对话")
     kb_ids = Column(ARRAY(Integer), default=list)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
@@ -93,6 +93,6 @@ class Message(Base):
     content = Column(Text, nullable=False)
     sources = Column(JSONB, nullable=True)
     agent = Column(String(50), nullable=True)  # rag / general / cache
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     conversation = relationship("Conversation", back_populates="messages")

@@ -60,6 +60,8 @@ async def put_store(
 ):
     """存储或更新键值对。"""
     await store_put(db, str(current_user.id), data.key, data.value, data.namespace)
+    from app.services.agent_graph import invalidate_store_cache
+    invalidate_store_cache(str(current_user.id))
 
 
 @router.delete("/{key}", status_code=status.HTTP_204_NO_CONTENT)
@@ -73,6 +75,8 @@ async def delete_store(
     deleted = await store_delete(db, str(current_user.id), key, namespace)
     if not deleted:
         raise HTTPException(status_code=404, detail="键不存在")
+    from app.services.agent_graph import invalidate_store_cache
+    invalidate_store_cache(str(current_user.id))
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
@@ -83,3 +87,5 @@ async def clear_store(
 ):
     """清空当前用户所有 Store 数据。"""
     await store_delete_all(db, str(current_user.id), namespace)
+    from app.services.agent_graph import invalidate_store_cache
+    invalidate_store_cache(str(current_user.id))

@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 # 预编译正则
 _WORD_PATTERN = re.compile(r'[\u4e00-\u9fff]+|\w+')
 
+# 自动记忆提取节流记录
+_auto_extract_and_save._last_run: dict[str, float] = {}
+
 
 # ==================== State 定义 ====================
 
@@ -56,6 +59,18 @@ class AgentState(TypedDict):
 # Store 内存缓存（60 秒 TTL）
 _store_cache: dict[str, tuple[float, dict]] = {}
 _STORE_CACHE_TTL = 60  # 秒
+
+
+def invalidate_store_cache(user_id: str | None = None):
+    """清除 Store 内存缓存。
+
+    Args:
+        user_id: 指定用户 ID 清除，为 None 时清除全部
+    """
+    if user_id is None:
+        _store_cache.clear()
+    else:
+        _store_cache.pop(user_id, None)
 
 
 async def _load_user_store(user_id: str) -> dict:
@@ -188,15 +203,11 @@ async def _auto_extract_and_save(user_id: str, query: str, answer: str):
         return
 
     # 节流：每用户每 5 分钟最多一次
-    import time
     now = time.time()
     _extract_key = f"_last_extract_{user_id}"
-    if hasattr(_auto_extract_and_save, '_last_run'):
-        if _auto_extract_and_save._last_run.get(_extract_key, 0) > now - 300:
-            return
-    else:
-        _auto_extract_and_save._last_run = {}
-    _auto_extract_and_save._last_run[_extract_key] = now
+    last_run = _auto_extract_and_save._last_run.get(_extract_key, 0)
+    if now - last_run < 300:
+        return
 
     try:
         from app.core.llm import get_llm_for_supervisor
@@ -231,6 +242,9 @@ async def _auto_extract_and_save(user_id: str, query: str, answer: str):
                 logger.info(f"Auto-extracted profile for user={user_id}: {list(extracted.keys())}")
     except Exception as e:
         logger.error(f"Auto-extract failed: {e}")
+    else:
+        # LLM 调用成功后才更新节流时间
+        _auto_extract_and_save._last_run[_extract_key] = now
 
 
 # ==================== 准备函数 ====================
@@ -404,8 +418,6 @@ async def prepare_node(state: AgentState) -> dict:
         "agent_name": agent_name,
         "sources": sources,
         "from_cache": False,
-        # 通过 state 传递给 generate 节点
-        "messages": state.get("messages", []),
         "kb_ids": permitted_kb_ids,
     }
 
