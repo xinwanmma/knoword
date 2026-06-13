@@ -33,7 +33,6 @@ langchain-ollama>=0.2.0
 
 # --- 记忆系统 ---
 mem0ai>=0.1.0
-memary>=0.1.0
 
 # --- 文档解析 ---
 PyMuPDF>=1.24.0
