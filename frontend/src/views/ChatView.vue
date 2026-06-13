@@ -68,7 +68,8 @@
           <div v-else class="assistant-block">
             <!-- Agent 标签 -->
             <div class="agent-label">
-              <span v-if="msg.agent === 'rag'" class="agent-tag agent-rag">🟢 RAG 助手</span>
+              <span v-if="msg.fromCache" class="agent-tag agent-cache">⚡ 缓存命中</span>
+              <span v-else-if="msg.agent === 'rag'" class="agent-tag agent-rag">🟢 RAG 助手</span>
               <span v-else class="agent-tag agent-general">🔵 通用助手</span>
             </div>
             <!-- 引用来源 -->
@@ -106,8 +107,9 @@
         <!-- 正在生成的流式回答 -->
         <div v-if="streaming" class="assistant-block">
           <!-- Agent 标签 -->
-          <div v-if="streamAgent" class="agent-label">
-            <span v-if="streamAgent === 'rag'" class="agent-tag agent-rag">🟢 RAG 助手</span>
+          <div v-if="streamAgent || streamFromCache" class="agent-label">
+            <span v-if="streamFromCache" class="agent-tag agent-cache">⚡ 缓存命中</span>
+            <span v-else-if="streamAgent === 'rag'" class="agent-tag agent-rag">🟢 RAG 助手</span>
             <span v-else class="agent-tag agent-general">🔵 通用助手</span>
           </div>
           <div v-if="streamSources.length > 0" class="sources-section">
@@ -175,6 +177,7 @@ const streaming = ref(false)
 const streamText = ref('')
 const streamSources = ref([])
 const streamAgent = ref('')
+const streamFromCache = ref(false)
 const searchMode = ref('selected')
 const selectedKbIds = ref([])
 const knowledgeBases = ref([])
@@ -237,6 +240,7 @@ function sendMessage() {
   streamText.value = ''
   streamSources.value = []
   streamAgent.value = ''
+  streamFromCache.value = false
   streaming.value = true
   scrollToBottom()
 
@@ -260,6 +264,9 @@ function sendMessage() {
     onAgent: (data) => {
       streamAgent.value = data.name
     },
+    onCache: (data) => {
+      streamFromCache.value = data.hit
+    },
     onDone: (data) => {
       streaming.value = false
       currentConvId.value = data.conversation_id
@@ -268,6 +275,7 @@ function sendMessage() {
         content: streamText.value,
         sources: streamSources.value.length > 0 ? [...streamSources.value] : null,
         agent: streamAgent.value,
+        fromCache: streamFromCache.value,
       })
       streamText.value = ''
       streamSources.value = []
@@ -281,6 +289,7 @@ function sendMessage() {
       streamText.value = ''
       streamSources.value = []
       streamAgent.value = ''
+      streamFromCache.value = false
     },
   })
 }
@@ -485,5 +494,10 @@ function scrollToBottom() {
 .agent-general {
   background: #ecf5ff;
   color: #409eff;
+}
+
+.agent-cache {
+  background: #fdf6ec;
+  color: #e6a23c;
 }
 </style>

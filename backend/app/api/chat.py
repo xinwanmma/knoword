@@ -1,4 +1,4 @@
-"""RAG 对话路由 — LangGraph 多 Agent + 三层记忆 + SSE 流式。"""
+"""RAG 对话路由 — LangGraph + 真实流式 SSE。"""
 
 import json
 import uuid
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/chat", tags=["对话"])
 
 def _sse_event(event: str, data) -> str:
     """构造 SSE 事件字符串。"""
-    if isinstance(data, dict) or isinstance(data, list):
+    if isinstance(data, (dict, list)):
         data = json.dumps(data, ensure_ascii=False)
     return f"event: {event}\ndata: {data}\n\n"
 
@@ -55,40 +55,25 @@ async def _load_conversation_history(
     return lc_messages
 
 
-async def _load_memories(user_id: str, query: str) -> dict:
-    """加载用户 Store 状态。"""
-    store_data = {}
-
-    if settings.STORE_ENABLED:
-        from app.db.database import async_session_factory
-        from app.services.store_service import store_get_all
-
-        async with async_session_factory() as db:
-            entries = await store_get_all(db, user_id)
-            store_data = {e["key"]: e["value"] for e in entries}
-
-    return {"store_data": store_data}
-
-
-async def _update_memories(user_id: str, query: str, answer: str):
-    """对话结束后写入 Store 状态。"""
-    pass  # Store 由用户主动管理，不需要自动写入
-
-
 @router.post("")
 async def chat(
     req: ChatRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """发送消息并获取流式回答（LangGraph + SSE）。
+    """发送消息并获取流式回答（LangGraph + 真实流式）。
 
-    SSE 事件流：
-    - agent:    当前处理的 Agent 名称
+    流程：
+    1. prepare 阶段（非流式）：Store 加载 + 缓存检查 + 路由 + 检索
+    2. generate 阶段（真流式）：llm.astream 逐 token 输出
+    3. postprocess 阶段：缓存保存 + 自动提取记忆
+
+    SSE 事件：
+    - agent:    当前 Agent 名称
     - sources:  RAG 引用来源
-    - memories: 命中的记忆摘要
-    - token:    逐 token 流式返回
-    - done:     回答完毕
+    - token:    逐 token 真实流式
+    - cache:    缓存命中标记
+    - done:     完成
     - error:    错误
     """
 
@@ -103,54 +88,103 @@ async def chat(
             if conversation_id:
                 history_messages = await _load_conversation_history(conversation_id, db)
 
-            # 2. 构建当前消息
             current_message = HumanMessage(content=req.query)
             all_messages = history_messages + [current_message]
 
-            # 3. 加载三层记忆
-            memories = await _load_memories(str(current_user.id), req.query)
-
-            # 4. 构建初始状态
+            # 2. 构建初始状态
             initial_state = {
                 "messages": all_messages,
                 "user_id": str(current_user.id),
                 "user_name": current_user.username,
                 "kb_ids": req.kb_ids or [],
                 "search_all": req.search_all,
-                "store_data": memories["store_data"],
+                "store_data": {},
                 "agent_answer": "",
                 "sources": [],
                 "agent_name": "",
                 "original_query": req.query,
+                "from_cache": False,
             }
 
-            # 5. 运行 Agent 图（流式输出 token）
+            # 3. 运行 prepare 阶段
             graph = get_compiled_graph()
             thread_id = str(current_user.id)
             config = {"configurable": {"thread_id": thread_id}}
 
-            agent_name = ""
+            prepare_result = None
             async for event in graph.astream(initial_state, config, stream_mode="updates"):
                 for node_name, node_output in event.items():
-                    if node_name == "supervisor":
-                        agent_name = node_output.get("agent_name", "general")
-                        yield _sse_event("agent", {"name": agent_name})
+                    if node_name == "prepare":
+                        prepare_result = node_output
 
-                    elif node_name in ("rag_agent", "general_agent"):
-                        agent_answer = node_output.get("agent_answer", "")
-                        sources_data = node_output.get("sources", [])
-                        full_answer = agent_answer
+            if prepare_result is None:
+                yield _sse_event("error", {"message": "准备阶段失败"})
+                return
 
-                        # 发送 sources
-                        if sources_data:
-                            yield _sse_event("sources", sources_data)
+            agent_name = prepare_result.get("agent_name", "general")
+            from_cache = prepare_result.get("from_cache", False)
+            sources_data = prepare_result.get("sources", [])
 
-                        # 逐 token 流式发送（按字符分割模拟流式）
-                        for char in agent_answer:
-                            yield _sse_event("token", char)
-                            await asyncio.sleep(0)
+            # 4. 发送 agent 事件
+            yield _sse_event("agent", {"name": agent_name})
 
-            # 6. 保存对话到数据库（使用新 session，避免 StreamingResponse 竞态）
+            # 5. 缓存命中 → 直接返回答案
+            if from_cache:
+                full_answer = prepare_result.get("agent_answer", "")
+                yield _sse_event("cache", {"hit": True})
+                for char in full_answer:
+                    yield _sse_event("token", char)
+                    await asyncio.sleep(0)
+            else:
+                # 6. 真流式生成：用 llm.astream 逐 token 输出
+                if sources_data:
+                    yield _sse_event("sources", sources_data)
+
+                # 重新构建完整状态用于 generate
+                generate_state = {
+                    **initial_state,
+                    **prepare_result,
+                    "messages": all_messages,
+                }
+
+                # 直接调用 llm.astream 实现真流式
+                agent_name = prepare_result.get("agent_name", "general")
+                store_data = prepare_result.get("store_data", {})
+                query = req.query
+
+                from app.services.agent_graph import (
+                    _format_store_text, _format_sources_text, _format_history,
+                    _build_rag_prompt, _build_general_prompt,
+                )
+
+                store_text = _format_store_text(store_data)
+                history_text = _format_history(all_messages)
+
+                if agent_name == "rag" and sources_data:
+                    src_text = _format_sources_text({
+                        "documents": [s.get("content", "") for s in sources_data],
+                        "metadatas": [{"filename": s.get("filename", ""), "page": s.get("page", "?")} for s in sources_data],
+                        "distances": [1.0 - s.get("score", 0) for s in sources_data],
+                    })
+                    prompt_messages = _build_rag_prompt(query, store_text, src_text, history_text)
+                else:
+                    prompt_messages = _build_general_prompt(query, store_text, history_text, current_user.username)
+
+                from app.core.llm import get_llm
+                llm = get_llm()
+
+                async for chunk in llm.astream(prompt_messages):
+                    if chunk.content:
+                        full_answer += chunk.content
+                        yield _sse_event("token", chunk.content)
+                        await asyncio.sleep(0)
+
+                # 7. 异步后处理（缓存 + 自动记忆）
+                asyncio.create_task(_postprocess(
+                    str(current_user.id), req.query, full_answer
+                ))
+
+            # 8. 保存对话到数据库
             from app.db.database import async_session_factory
             async with async_session_factory() as write_db:
                 if not conversation_id:
@@ -164,7 +198,6 @@ async def chat(
                     await write_db.flush()
                     conversation_id = str(conv.id)
 
-                # 保存用户消息
                 user_msg = Message(
                     id=uuid.uuid4(),
                     conversation_id=uuid.UUID(conversation_id),
@@ -173,7 +206,6 @@ async def chat(
                 )
                 write_db.add(user_msg)
 
-                # 保存助手回答
                 assistant_msg = Message(
                     id=uuid.uuid4(),
                     conversation_id=uuid.UUID(conversation_id),
@@ -184,12 +216,7 @@ async def chat(
                 write_db.add(assistant_msg)
                 await write_db.commit()
 
-            # 7. 异步更新三层记忆
-            asyncio.create_task(_update_memories(
-                str(current_user.id), req.query, full_answer
-            ))
-
-            # 8. 发送 done 事件
+            # 9. done
             yield _sse_event("done", {"conversation_id": conversation_id})
 
         except Exception as e:
@@ -205,6 +232,16 @@ async def chat(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+async def _postprocess(user_id: str, query: str, answer: str):
+    """后处理：缓存 + 自动记忆（异步不阻塞响应）。"""
+    try:
+        from app.services.agent_graph import _save_to_cache, _auto_extract_and_save
+        await _save_to_cache(user_id, query, answer)
+        await _auto_extract_and_save(user_id, query, answer)
+    except Exception as e:
+        logger.error(f"Postprocess failed: {e}")
 
 
 @router.get("/history", response_model=list[ConversationOut])

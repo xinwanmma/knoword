@@ -1,18 +1,19 @@
-"""LangGraph 多 Agent 路由系统。
+"""LangGraph 多 Agent 路由系统（最新 API）。
 
-架构：
-START → memory_retrieval → supervisor → [rag_agent | general_agent] → memory_update → END
+架构拆分为两阶段：
+1. prepare 阶段（非流式）：Store 加载 → Supervisor 路由 → 检索 → 准备上下文
+2. generate 阶段（流式）：LLM 用 astream 逐 token 生成
 
-- memory_retrieval: 加载用户 Store 状态
-- supervisor: 用 LLM 判断意图，路由到对应 Agent
-- rag_agent: 知识库检索 + Store 上下文 + LLM 生成
-- general_agent: Store 上下文 + LLM 生成
-- memory_update: 对话后处理（可扩展）
+支持特性：
+- Store 自动记忆：对话后自动提取用户偏好存入 Store
+- Store 权限过滤：从 Store 读取用户权限，过滤无权访问的知识库
+- Store 问答缓存：相似问题直接返回缓存答案
 """
 
-import json
+import hashlib
 import logging
-from typing import Annotated, Any, Literal, TypedDict
+import time
+from typing import Annotated, TypedDict
 
 from langchain_core.messages import (
     AIMessage, BaseMessage, HumanMessage, SystemMessage,
@@ -35,40 +36,167 @@ class AgentState(TypedDict):
     kb_ids: list[int]
     search_all: bool
 
-    # Store 用户状态
+    # Store
     store_data: dict
 
-    # Agent 输出
+    # 输出
     agent_answer: str
     sources: list[dict]
     agent_name: str
-
-    # 原始查询
     original_query: str
+    from_cache: bool
 
 
-# ==================== Agent 工具 ====================
+# ==================== Store 功能 ====================
 
-async def _retrieve_documents(query: str, kb_ids: list[int], search_all: bool, user_id: str) -> dict:
-    """检索文档 — 使用混合检索（BM25 + 向量）。"""
-    from app.services.hybrid_search import hybrid_search
+async def _load_user_store(user_id: str) -> dict:
+    """加载用户 Store 数据（profile + user 命名空间合并）。"""
+    from app.db.database import async_session_factory
+    from app.services.store_service import store_get_all
 
-    # 构建过滤条件
-    if search_all:
-        filter_kb_ids = None
-    elif kb_ids:
-        filter_kb_ids = kb_ids
+    async with async_session_factory() as db:
+        entries = await store_get_all(db, user_id)
+    return {e["key"]: e["value"] for e in entries}
+
+
+async def _check_cache(user_id: str, query: str) -> dict | None:
+    """检查问答缓存。返回缓存答案或 None。"""
+    if not settings.STORE_ENABLED:
+        return None
+
+    from app.db.database import async_session_factory
+    from app.services.store_service import store_get_all
+
+    async with async_session_factory() as db:
+        entries = await store_get_all(db, user_id, namespace="cache")
+
+    # 简单字符串匹配 + 缓存过期检查
+    now = time.time()
+    ttl = settings.STORE_CACHE_TTL_DAYS * 86400
+    threshold = settings.STORE_CACHE_SIMILARITY_THRESHOLD
+
+    for entry in entries:
+        cached = entry.get("value", {})
+        if not isinstance(cached, dict):
+            continue
+        cached_query = cached.get("query", "")
+        cached_answer = cached.get("answer", "")
+        cached_time = cached.get("timestamp", 0)
+
+        # 过期检查
+        if now - cached_time > ttl:
+            continue
+
+        # 简单相似度：基于关键词重叠
+        if _simple_similarity(query, cached_query) >= threshold:
+            logger.info(f"Cache hit: '{query[:30]}...' → 有缓存")
+            return {"answer": cached_answer, "from_cache": True}
+
+    return None
+
+
+async def _save_to_cache(user_id: str, query: str, answer: str):
+    """保存问答到缓存。"""
+    if not settings.STORE_ENABLED:
+        return
+
+    from app.db.database import async_session_factory
+    from app.services.store_service import store_put
+
+    cache_key = f"cache_{hashlib.md5(query.encode()).hexdigest()[:16]}"
+    async with async_session_factory() as db:
+        await store_put(db, user_id, cache_key, {
+            "query": query,
+            "answer": answer,
+            "timestamp": time.time(),
+        }, namespace="cache")
+
+
+def _simple_similarity(a: str, b: str) -> float:
+    """简单的关键词重叠相似度。"""
+    if not a or not b:
+        return 0.0
+    import re
+    words_a = set(re.findall(r'[\u4e00-\u9fff]+|\w+', a.lower()))
+    words_b = set(re.findall(r'[\u4e00-\u9fff]+|\w+', b.lower()))
+    if not words_a or not words_b:
+        return 0.0
+    return len(words_a & words_b) / max(len(words_a), len(words_b))
+
+
+async def _get_permitted_kb_ids(user_id: str, requested_kb_ids: list[int], search_all: bool) -> list[int]:
+    """从 Store 读取权限，过滤知识库 ID。
+
+    返回用户有权限访问的知识库 ID 列表。
+    """
+    if not settings.STORE_ENABLED:
+        return requested_kb_ids
+
+    from app.db.database import async_session_factory
+    from app.services.store_service import store_get
+
+    async with async_session_factory() as db:
+        entry = await store_get(db, user_id, "permissions")
+
+    if not entry:
+        # 没有设置权限，返回原始请求
+        return requested_kb_ids
+
+    permitted = entry.get("value", {})
+    if isinstance(permitted, dict):
+        allowed_kb_ids = permitted.get("kb_ids", [])
+    elif isinstance(permitted, list):
+        allowed_kb_ids = permitted
     else:
-        filter_kb_ids = None
+        return requested_kb_ids
 
-    return await hybrid_search(
-        query=query,
-        kb_ids=filter_kb_ids,
-        n_results=5,
-        vector_weight=0.6,
-        bm25_weight=0.4,
-    )
+    # 取交集
+    if search_all:
+        return allowed_kb_ids
+    return [kb_id for kb_id in requested_kb_ids if kb_id in allowed_kb_ids]
 
+
+async def _auto_extract_and_save(user_id: str, query: str, answer: str):
+    """对话后自动提取用户偏好并存入 Store。"""
+    if not settings.STORE_ENABLED or not settings.STORE_AUTO_EXTRACT:
+        return
+
+    try:
+        from app.core.llm import get_llm_for_supervisor
+
+        llm = get_llm_for_supervisor()
+        prompt = f"""分析以下对话，提取用户的关键信息（姓名、偏好、工作内容、兴趣等）。
+只提取明确提到的信息，不要推测。
+
+用户：{query}
+助手：{answer[:200]}
+
+以 JSON 格式返回提取的信息，例如：{{"name": "张三", "preference": "..."}}
+如果没有值得记住的信息，返回空对象 {{}}。只返回 JSON，不要其他文字。"""
+
+        from langchain_core.messages import HumanMessage
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        content = response.content.strip()
+
+        import json
+        if content.startswith("```"):
+            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        if content.startswith("{"):
+            extracted = json.loads(content)
+            if extracted:
+                from app.db.database import async_session_factory
+                from app.services.store_service import store_put
+
+                async with async_session_factory() as db:
+                    for key, value in extracted.items():
+                        store_key = f"profile_{key}"
+                        await store_put(db, user_id, store_key, value, namespace="profile")
+                logger.info(f"Auto-extracted profile for user={user_id}: {list(extracted.keys())}")
+    except Exception as e:
+        logger.error(f"Auto-extract failed: {e}")
+
+
+# ==================== 准备函数 ====================
 
 def _format_sources_text(search_results: dict) -> str:
     """将检索结果格式化为 Prompt 文本。"""
@@ -82,152 +210,36 @@ def _format_sources_text(search_results: dict) -> str:
         score = round(1 - dist, 4)
         filename = meta.get("filename", "未知文件")
         page = meta.get("page", "?")
-        doc_id = meta.get("doc_id", 0)
         lines.append(f"[来源{i+1}] {filename} 第{page}页 (相关度: {score})\n{doc_text}")
 
     return "\n\n".join(lines)
 
 
-def _format_memories_text(store_data: dict) -> str:
+def _format_store_text(store_data: dict) -> str:
     """将 Store 状态格式化为 Prompt 文本。"""
     if store_data:
-        store_lines = [f"- {k}: {v}" for k, v in store_data.items()]
-        return "用户会话状态：\n" + "\n".join(store_lines)
+        lines = []
+        for k, v in store_data.items():
+            if not k.startswith("cache_"):  # 不显示缓存数据
+                lines.append(f"- {k}: {v}")
+        if lines:
+            return "用户画像与偏好：\n" + "\n".join(lines)
     return ""
 
 
-# ==================== Graph 节点 ====================
-
-def memory_retrieval_node(state: AgentState) -> dict:
-    """记忆检索节点：加载用户 Store 状态。"""
-    return {
-        "store_data": state.get("store_data", {}),
-    }
-
-
-def supervisor_node(state: AgentState) -> dict:
-    """Supervisor 路由节点：用 LLM 判断用户意图。"""
-    from app.core.llm import get_llm_for_supervisor
-
-    llm = get_llm_for_supervisor()
-
-    # 获取用户最后一条消息
-    messages = state.get("messages", [])
-    if not messages:
-        return {"agent_name": "general"}
-
-    last_query = messages[-1].content if isinstance(messages[-1], HumanMessage) else str(messages[-1])
-
-    # 构建路由 prompt
-    kb_ids = state.get("kb_ids", [])
-    search_all = state.get("search_all", False)
-    has_kb = bool(kb_ids) or search_all
-
-    route_prompt = f"""你是一个意图分类器。根据用户问题和上下文，决定由哪个 Agent 处理。
-
-可选 Agent：
-- rag: 用户提问需要基于知识库/文档回答。当有知识库被选中时优先使用。
-- general: 通用对话，闲聊，打招呼，或知识库未覆盖的问题。
-
-当前知识库状态：{"已选择知识库" if has_kb else "未选择知识库"}
-
-用户问题：{last_query}
-
-只回复一个词：rag 或 general"""
-
-    try:
-        from langchain_core.messages import HumanMessage as LCHumanMessage
-        response = llm.invoke([LCHumanMessage(content=route_prompt)])
-        agent_name = response.content.strip().lower()
-
-        if agent_name not in ("rag", "general"):
-            agent_name = "rag" if has_kb else "general"
-
-        logger.info(f"Supervisor 路由: '{last_query[:30]}...' → {agent_name}")
-        return {"agent_name": agent_name}
-
-    except Exception as e:
-        logger.error(f"Supervisor 路由失败: {e}，默认使用 general")
-        return {"agent_name": "general"}
-
-
-async def rag_agent_node(state: AgentState) -> dict:
-    """RAG Agent：检索知识库 + 记忆上下文 + LLM 生成。"""
-    from app.core.llm import get_llm
-
-    messages = state.get("messages", [])
-    if not messages:
-        return {"agent_answer": "无消息内容", "sources": []}
-
-    query = state["original_query"]
-    kb_ids = state.get("kb_ids", [])
-    search_all = state.get("search_all", False)
-    user_id = state.get("user_id", "")
-    user_name = state.get("user_name", "用户")
-
-    # 检索文档
-    search_results = await _retrieve_documents(query, kb_ids, search_all, user_id)
-    sources = []
-
-    # 对检索结果进行 Reranking
-    candidates = []
-    for i, (doc_text, meta, dist) in enumerate(
-        zip(
-            search_results.get("documents", []),
-            search_results.get("metadatas", []),
-            search_results.get("distances", []),
-        )
-    ):
-        candidates.append({
-            "text": doc_text,
-            "metadata": meta,
-            "score": round(1 - dist, 4),
-        })
-
-    # Reranking（关键词融合快速排序，不依赖 LLM）
-    from app.services.reranker import rerank_with_score_fusion
-    reranked = await rerank_with_score_fusion(query, candidates, top_n=5)
-
-    for item in reranked:
-        meta = item["metadata"]
-        sources.append({
-            "doc_id": meta.get("doc_id", 0),
-            "filename": meta.get("filename", ""),
-            "page": meta.get("page"),
-            "content": item["text"][:500],
-            "score": item.get("rerank_score", item["score"]),
-        })
-
-    # 构建 rerank 后的搜索结果用于 prompt
-    reranked_search_results = {
-        "documents": [r["text"] for r in reranked],
-        "metadatas": [r["metadata"] for r in reranked],
-        "distances": [1.0 - r.get("rerank_score", r["score"]) for r in reranked],
-    }
-
-    # 格式化记忆上下文
-    memories_text = _format_memories_text(state.get("store_data", {}))
-
-    # 格式化检索结果（使用 rerank 后的结果）
-    sources_text = _format_sources_text(reranked_search_results)
-
-    # 加载最近 5 轮对话历史
-    history_text = ""
-    historical = [m for m in messages if not isinstance(m, HumanMessage) or m != messages[-1]]
-    recent = historical[-10:]  # 最近 5 轮
-    for m in recent:
-        role = "用户" if isinstance(m, HumanMessage) else "助手"
-        content = m.content[:200] if hasattr(m, 'content') else str(m)[:200]
-        history_text += f"{role}: {content}\n"
-
-    # 构建 Prompt
-    system_prompt = f"""你是一个知识库问答助手。请根据以下参考资料和用户记忆回答问题。
+def _build_rag_prompt(
+    query: str,
+    store_text: str,
+    sources_text: str,
+    history_text: str,
+) -> list:
+    """构建 RAG Agent 的消息列表。"""
+    system_msg = f"""你是一个知识库问答助手。请根据以下参考资料和用户画像回答问题。
 如果资料中没有相关信息，请如实说明。
 请用中文回答，保持准确、简洁、有条理。
 
-{f'''用户记忆：
-{memories_text}
-''' if memories_text else ''}
+{f'''{store_text}
+''' if store_text else ''}
 
 参考资料：
 {sources_text}
@@ -237,34 +249,37 @@ async def rag_agent_node(state: AgentState) -> dict:
 
 用户问题：{query}"""
 
-    llm = get_llm()
-    try:
-        from langchain_core.messages import HumanMessage as LCHumanMessage, SystemMessage as LCSysMessage
-        response = await llm.ainvoke([
-            LCSysMessage(content="你是一个知识库问答助手。"),
-            LCHumanMessage(content=system_prompt),
-        ])
-        return {"agent_answer": response.content, "sources": sources}
-    except Exception as e:
-        logger.error(f"RAG Agent 生成失败: {e}")
-        return {"agent_answer": f"生成失败: {e}", "sources": sources}
+    return [
+        SystemMessage(content="你是一个知识库问答助手。"),
+        HumanMessage(content=system_msg),
+    ]
 
 
-async def general_agent_node(state: AgentState) -> dict:
-    """General Agent：通用对话 + 记忆上下文。"""
-    from app.core.llm import get_llm
+def _build_general_prompt(
+    query: str,
+    store_text: str,
+    history_text: str,
+    user_name: str,
+) -> list:
+    """构建 General Agent 的消息列表。"""
+    system_msg = f"""你是一个智能助手。请用中文回答问题，保持友好、准确。
 
-    messages = state.get("messages", [])
-    if not messages:
-        return {"agent_answer": "无消息内容", "sources": []}
+{f'''{store_text}
+''' if store_text else ''}
 
-    query = state["original_query"]
-    user_name = state.get("user_name", "用户")
+{f'''历史对话：
+{history_text}''' if history_text else ''}
 
-    # 格式化记忆上下文
-    memories_text = _format_memories_text(state.get("store_data", {}))
+用户 {user_name} 说：{query}"""
 
-    # 加载最近对话历史
+    return [
+        SystemMessage(content="你是一个智能助手。"),
+        HumanMessage(content=system_msg),
+    ]
+
+
+def _format_history(messages: list) -> str:
+    """格式化对话历史。"""
     history_text = ""
     recent = messages[-10:]
     for m in recent:
@@ -272,88 +287,210 @@ async def general_agent_node(state: AgentState) -> dict:
             history_text += f"用户: {m.content[:200]}\n"
         elif isinstance(m, AIMessage):
             history_text += f"助手: {m.content[:200]}\n"
-
-    system_prompt = f"""你是一个智能助手。请用中文回答问题，保持友好、准确。
-
-{f'''用户记忆：
-{memories_text}
-''' if memories_text else ''}
-
-{f'''历史对话：
-{history_text}''' if history_text else ''}
-
-用户 {user_name} 说：{query}"""
-
-    llm = get_llm()
-    try:
-        from langchain_core.messages import HumanMessage as LCHumanMessage, SystemMessage as LCSysMessage
-        response = await llm.ainvoke([
-            LCSysMessage(content="你是一个智能助手。"),
-            LCHumanMessage(content=system_prompt),
-        ])
-        return {"agent_answer": response.content, "sources": []}
-    except Exception as e:
-        logger.error(f"General Agent 生成失败: {e}")
-        return {"agent_answer": f"生成失败: {e}", "sources": []}
+    return history_text
 
 
-def memory_update_node(state: AgentState) -> dict:
-    """记忆更新节点：对话结束后写入三层记忆。
+# ==================== 图节点 ====================
 
-    同步占位，实际异步写入在 chat.py 中完成。
+async def prepare_node(state: AgentState) -> dict:
+    """准备阶段：加载 Store → 检查缓存 → Supervisor 路由 → 检索文档。
+
+    非流式，返回完整上下文。
     """
+    query = state["original_query"]
+    user_id = state["user_id"]
+    kb_ids = state.get("kb_ids", [])
+    search_all = state.get("search_all", False)
+
+    # 1. 加载 Store
+    store_data = await _load_user_store(user_id)
+
+    # 2. 检查问答缓存
+    cache_result = await _check_cache(user_id, query)
+    if cache_result:
+        logger.info(f"Cache hit for user={user_id}: '{query[:30]}...'")
+        return {
+            "store_data": store_data,
+            "agent_answer": cache_result["answer"],
+            "sources": [],
+            "agent_name": "cache",
+            "from_cache": True,
+        }
+
+    # 3. 权限过滤
+    permitted_kb_ids = await _get_permitted_kb_ids(user_id, kb_ids, search_all)
+
+    # 4. Supervisor 路由
+    from app.core.llm import get_llm_for_supervisor
+    llm = get_llm_for_supervisor()
+
+    has_kb = bool(permitted_kb_ids) or search_all
+    route_prompt = f"""你是一个意图分类器。根据用户问题和上下文，决定由哪个 Agent 处理。
+
+可选 Agent：
+- rag: 用户提问需要基于知识库/文档回答。当有知识库被选中时优先使用。
+- general: 通用对话，闲聊，打招呼，或知识库未覆盖的问题。
+
+当前知识库状态：{"已选择知识库" if has_kb else "未选择知识库"}
+
+用户问题：{query}
+
+只回复一个词：rag 或 general"""
+
+    try:
+        from langchain_core.messages import HumanMessage as LCHumanMessage
+        response = await llm.ainvoke([LCHumanMessage(content=route_prompt)])
+        agent_name = response.content.strip().lower()
+        if agent_name not in ("rag", "general"):
+            agent_name = "rag" if has_kb else "general"
+    except Exception as e:
+        logger.error(f"Supervisor 路由失败: {e}")
+        agent_name = "general" if not has_kb else "rag"
+
+    # 5. 检索文档（RAG Agent 需要）
+    sources = []
+    search_results = None
+    if agent_name == "rag" and (permitted_kb_ids or search_all):
+        from app.services.hybrid_search import hybrid_search
+        from app.services.reranker import rerank_with_score_fusion
+
+        search_results = await hybrid_search(
+            query=query,
+            kb_ids=permitted_kb_ids if not search_all else None,
+            n_results=5,
+        )
+
+        candidates = [
+            {"text": d, "metadata": m, "score": round(1 - dist, 4)}
+            for d, m, dist in zip(
+                search_results.get("documents", []),
+                search_results.get("metadatas", []),
+                search_results.get("distances", []),
+            )
+        ]
+        reranked = await rerank_with_score_fusion(query, candidates, top_n=5)
+
+        for item in reranked:
+            meta = item["metadata"]
+            sources.append({
+                "doc_id": meta.get("doc_id", 0),
+                "filename": meta.get("filename", ""),
+                "page": meta.get("page"),
+                "content": item["text"][:500],
+                "score": item.get("rerank_score", item["score"]),
+            })
+
+        search_results = {
+            "documents": [r["text"] for r in reranked],
+            "metadatas": [r["metadata"] for r in reranked],
+            "distances": [1.0 - r.get("rerank_score", r["score"]) for r in reranked],
+        }
+
+    logger.info(f"Prepare done: agent={agent_name}, cache=False, kb={len(permitted_kb_ids)}")
+
+    return {
+        "store_data": store_data,
+        "agent_name": agent_name,
+        "sources": sources,
+        "from_cache": False,
+        # 通过 state 传递给 generate 节点
+        "messages": state.get("messages", []),
+        "kb_ids": permitted_kb_ids,
+    }
+
+
+async def generate_node(state: AgentState) -> dict:
+    """生成阶段：用 llm.astream() 逐 token 流式生成。
+
+    这个节点的结果会被外部通过 astream_events 消费。
+    """
+    agent_name = state.get("agent_name", "general")
+    query = state["original_query"]
+    store_text = _format_store_text(state.get("store_data", {}))
+    messages = state.get("messages", [])
+    history_text = _format_history(messages)
+
+    if agent_name == "rag":
+        sources_text = _format_sources_text({
+            "documents": [s.get("content", "") for s in state.get("sources", [])],
+            "metadatas": [{"filename": s.get("filename", ""), "page": s.get("page", "?")} for s in state.get("sources", [])],
+            "distances": [1.0 - s.get("score", 0) for s in state.get("sources", [])],
+        })
+        prompt_messages = _build_rag_prompt(query, store_text, sources_text, history_text)
+    else:
+        user_name = state.get("user_name", "用户")
+        prompt_messages = _build_general_prompt(query, store_text, history_text, user_name)
+
+    from app.core.llm import get_llm
+    llm = get_llm()
+
+    # 流式生成：收集完整回答用于后续存储
+    full_answer = ""
+    async for chunk in llm.astream(prompt_messages):
+        if chunk.content:
+            full_answer += chunk.content
+
+    return {
+        "agent_answer": full_answer,
+        "messages": [AIMessage(content=full_answer)],
+    }
+
+
+async def postprocess_node(state: AgentState) -> dict:
+    """后处理：缓存问答 + 自动提取记忆。"""
+    user_id = state["user_id"]
+    query = state["original_query"]
+    answer = state.get("agent_answer", "")
+    from_cache = state.get("from_cache", False)
+
+    if not from_cache and answer:
+        # 保存到缓存
+        await _save_to_cache(user_id, query, answer)
+        # 自动提取用户偏好
+        await _auto_extract_and_save(user_id, query, answer)
+
     return {}
 
 
-def route_after_supervisor(state: AgentState) -> str:
-    """根据 supervisor 决定路由。"""
-    return state.get("agent_name", "general")
+def route_after_prepare(state: AgentState) -> str:
+    """根据 prepare 结果决定路由。"""
+    if state.get("from_cache"):
+        return "postprocess"
+    return "generate"
 
 
 # ==================== 构建图 ====================
 
 def build_agent_graph():
-    """构建 LangGraph StateGraph。
-
-    使用 MemorySaver checkpointer 持久化 Agent 状态，
-    支持断点续传和多轮对话上下文。
-    """
+    """构建 LangGraph StateGraph。"""
     from app.services.checkpoint_service import get_checkpointer
 
     graph = StateGraph(AgentState)
 
-    # 添加节点
-    graph.add_node("memory_retrieval", memory_retrieval_node)
-    graph.add_node("supervisor", supervisor_node)
-    graph.add_node("rag_agent", rag_agent_node)
-    graph.add_node("general_agent", general_agent_node)
-    graph.add_node("memory_update", memory_update_node)
+    graph.add_node("prepare", prepare_node)
+    graph.add_node("generate", generate_node)
+    graph.add_node("postprocess", postprocess_node)
 
-    # 添加边
-    graph.add_edge(START, "memory_retrieval")
-    graph.add_edge("memory_retrieval", "supervisor")
+    graph.add_edge(START, "prepare")
 
     graph.add_conditional_edges(
-        "supervisor",
-        route_after_supervisor,
+        "prepare",
+        route_after_prepare,
         {
-            "rag": "rag_agent",
-            "general": "general_agent",
+            "generate": "generate",
+            "postprocess": "postprocess",
         },
     )
 
-    graph.add_edge("rag_agent", "memory_update")
-    graph.add_edge("general_agent", "memory_update")
-    graph.add_edge("memory_update", END)
+    graph.add_edge("generate", "postprocess")
+    graph.add_edge("postprocess", END)
 
-    # 编译（附带 checkpointer）
     checkpointer = get_checkpointer()
     compiled = graph.compile(checkpointer=checkpointer)
-    logger.info("✅ LangGraph Agent 图编译成功（MemorySaver checkpointer 已启用）")
+    logger.info("✅ LangGraph Agent 图编译成功")
     return compiled
 
 
-# 延迟编译（导入时不执行）
 _compiled_graph = None
 
 

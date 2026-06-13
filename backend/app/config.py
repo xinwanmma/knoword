@@ -58,6 +58,9 @@ class Settings:
 
     # --- Store 会话状态 ---
     STORE_ENABLED: bool = os.getenv("STORE_ENABLED", "true").lower() == "true"
+    STORE_CACHE_TTL_DAYS: int = int(os.getenv("STORE_CACHE_TTL_DAYS", "30"))
+    STORE_CACHE_SIMILARITY_THRESHOLD: float = float(os.getenv("STORE_CACHE_SIMILARITY_THRESHOLD", "0.9"))
+    STORE_AUTO_EXTRACT: bool = os.getenv("STORE_AUTO_EXTRACT", "true").lower() == "true"
 
     # --- 应用 ---
     APP_NAME: str = "RAG 知识库系统"
