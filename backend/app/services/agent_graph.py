@@ -317,37 +317,12 @@ async def prepare_node(state: AgentState) -> dict:
             "from_cache": True,
         }
 
-    # 3. 权限过滤
+    # 3. 规则路由（不调 LLM，0 延迟）
     permitted_kb_ids = await _get_permitted_kb_ids(user_id, kb_ids, search_all)
-
-    # 4. Supervisor 路由
-    from app.core.llm import get_llm_for_supervisor
-    llm = get_llm_for_supervisor()
-
     has_kb = bool(permitted_kb_ids) or search_all
-    route_prompt = f"""你是一个意图分类器。根据用户问题和上下文，决定由哪个 Agent 处理。
+    agent_name = "rag" if has_kb else "general"
 
-可选 Agent：
-- rag: 用户提问需要基于知识库/文档回答。当有知识库被选中时优先使用。
-- general: 通用对话，闲聊，打招呼，或知识库未覆盖的问题。
-
-当前知识库状态：{"已选择知识库" if has_kb else "未选择知识库"}
-
-用户问题：{query}
-
-只回复一个词：rag 或 general"""
-
-    try:
-        from langchain_core.messages import HumanMessage as LCHumanMessage
-        response = await llm.ainvoke([LCHumanMessage(content=route_prompt)])
-        agent_name = response.content.strip().lower()
-        if agent_name not in ("rag", "general"):
-            agent_name = "rag" if has_kb else "general"
-    except Exception as e:
-        logger.error(f"Supervisor 路由失败: {e}")
-        agent_name = "general" if not has_kb else "rag"
-
-    # 5. 检索文档（RAG Agent 需要）
+    logger.info(f"Prepare done: agent={agent_name}, cache=False, kb={len(permitted_kb_ids)}")
     sources = []
     search_results = None
     if agent_name == "rag" and (permitted_kb_ids or search_all):
