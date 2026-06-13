@@ -79,7 +79,7 @@ class Settings:
     APP_NAME: str = "RAG 知识库系统"
     APP_VERSION: str = "0.1.0"
     API_PREFIX: str = "/api"
-    DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
+    DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
 
 
 settings = Settings()

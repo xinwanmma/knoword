@@ -148,11 +148,11 @@ async def add_to_graph(user_id: str, messages: list[dict]) -> dict:
             # 创建关系
             for rel in item.get("relations", []):
                 rel_type = rel.get("type", "RELATED_TO").upper().replace(" ", "_")
-            # 清洗关系类型，防止 Cypher 注入
-            import re as _re
-            rel_type = _re.sub(r'[^A-Z0-9_]', '', rel_type)
-            if not rel_type:
-                rel_type = "RELATED_TO"
+                # 清洗关系类型，防止 Cypher 注入
+                import re as _re
+                rel_type = _re.sub(r'[^A-Z0-9_]', '', rel_type)
+                if not rel_type:
+                    rel_type = "RELATED_TO"
                 target_name = rel.get("target", "").strip()
                 if not target_name:
                     continue

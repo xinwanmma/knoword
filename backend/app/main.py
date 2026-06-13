@@ -65,13 +65,9 @@ async def _create_default_admin():
         db.add(admin)
         await db.commit()
         logger.info(
-            f"✅ 默认管理员已创建: "
-            f"用户名={settings.ADMIN_USERNAME}, "
-            f"密码={settings.ADMIN_PASSWORD}"
+            f"✅ 默认管理员已创建: 用户名={settings.ADMIN_USERNAME}"
         )
-        logger.info(
-            "⚠️  请在生产环境中修改默认管理员密码！"
-        )
+        logger.warning("⚠️  请在生产环境中修改默认管理员密码！")
 
 
 @asynccontextmanager
@@ -81,6 +77,10 @@ async def lifespan(app: FastAPI):
     await init_db()
     await _create_default_admin()
     logger.info("✅ 数据库初始化完成")
+
+    # JWT 密钥安全检查
+    if settings.JWT_SECRET_KEY.startswith("change-me"):
+        logger.warning("⚠️  JWT_SECRET_KEY 使用默认值！请在生产环境中修改！")
     yield
     logger.info("🔄 正在关闭...")
     await close_client()

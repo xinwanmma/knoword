@@ -120,16 +120,20 @@ export const chatAPI = {
               eventType = line.slice(7).trim()
             } else if (line.startsWith('data: ')) {
               const rawData = line.slice(6)
-              try {
-                const parsed = JSON.parse(rawData)
-                if (eventType === 'token') onToken(parsed)
-                else if (eventType === 'sources') onSources(parsed)
-                else if (eventType === 'agent') onAgent && onAgent(parsed)
-                else if (eventType === 'memories') onMemories && onMemories(parsed)
-                else if (eventType === 'done') onDone(parsed)
-                else if (eventType === 'error') onError(parsed.message || '生成失败')
-              } catch {
-                if (eventType === 'token') onToken(rawData)
+              if (eventType === 'token') {
+                // token 是纯文本，不需要 JSON.parse
+                onToken(rawData)
+              } else {
+                try {
+                  const parsed = JSON.parse(rawData)
+                  if (eventType === 'sources') onSources(parsed)
+                  else if (eventType === 'agent') onAgent && onAgent(parsed)
+                  else if (eventType === 'memories') onMemories && onMemories(parsed)
+                  else if (eventType === 'done') onDone(parsed)
+                  else if (eventType === 'error') onError(parsed.message || '生成失败')
+                } catch {
+                  // non-token events should be valid JSON
+                }
               }
             }
           }

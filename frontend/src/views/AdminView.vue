@@ -109,6 +109,8 @@ async function loadAll() {
     categories.value = catRes.data
     stats.kbCount = kbRes.data.length
     stats.userCount = usersRes.data.length
+    // 计算所有知识库的文档总数
+    stats.docCount = kbRes.data.reduce((sum, kb) => sum + (kb.document_count || 0), 0)
   } catch { /* noop */ }
 }
 

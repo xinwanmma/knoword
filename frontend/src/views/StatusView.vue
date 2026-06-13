@@ -47,8 +47,9 @@ const overallStatus = ref('')
 const serviceLabels = {
   database: 'PostgreSQL 数据库',
   chromadb: 'ChromaDB 向量库',
-  ollama_llm: 'Ollama LLM (qwen3:2b)',
+  ollama_llm: 'Ollama LLM (qwen3.5:2b)',
   ollama_embed: 'Ollama Embedding',
+  neo4j: 'Neo4j 知识图谱',
 }
 
 onMounted(() => {

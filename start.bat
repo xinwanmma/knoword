@@ -96,7 +96,6 @@ echo.
 REM ========== 数据库 ==========
 echo [4/5] 数据库初始化...
 cd /d "%BACKEND_DIR%"
-python -c "import asyncio; from app.db.database import engine, Base; asyncio.run(engine.begin().__aenter__().then(lambda c: c.run_sync(Base.metadata.create_all)))" >nul 2>&1
 alembic upgrade head 2>nul
 echo   [OK] 数据库就绪
 echo.
