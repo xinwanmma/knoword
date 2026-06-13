@@ -166,7 +166,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { chatAPI, kbAPI } from '../api'
 import { useUserStore } from '../stores/user'
 import { Plus, ChatLineRound, Delete, Document, Promotion, DataLine } from '@element-plus/icons-vue'
