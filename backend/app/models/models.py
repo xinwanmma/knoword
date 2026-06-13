@@ -92,6 +92,7 @@ class Message(Base):
     role = Column(String(20), nullable=False)  # user / assistant / system
     content = Column(Text, nullable=False)
     sources = Column(JSONB, nullable=True)
+    agent = Column(String(50), nullable=True)  # rag / general / cache
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversation = relationship("Conversation", back_populates="messages")

@@ -142,6 +142,7 @@ class MessageOut(BaseModel):
     role: str
     content: str
     sources: Optional[list[dict]] = None
+    agent: Optional[str] = None
     created_at: datetime
 
     class Config:

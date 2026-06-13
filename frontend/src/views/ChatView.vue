@@ -168,10 +168,13 @@
 <script setup>
 import { ref, reactive, onMounted, nextTick, watch } from 'vue'
 import { chatAPI, kbAPI } from '../api'
+import { useUserStore } from '../stores/user'
 import { Plus, ChatLineRound, Delete, Document, Promotion, DataLine } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { ElMessage } from 'element-plus'
 import MemoryPanel from '../components/MemoryPanel.vue'
+
+const userStore = useUserStore()
 
 // 状态
 const messages = ref([])
@@ -214,11 +217,17 @@ async function loadConversations() {
   } catch { /* noop */ }
 }
 
-async function loadConversation(convId) {
+async def loadConversation(convId) {
   currentConvId.value = convId
   try {
     const { data } = await chatAPI.getMessages(convId)
     messages.value = data
+    // 恢复该对话的知识库选择
+    const conv = conversations.value.find(c => c.id === convId)
+    if (conv && conv.kb_ids && conv.kb_ids.length > 0) {
+      selectedKbIds.value = conv.kb_ids
+      searchMode.value = 'selected'
+    }
     scrollToBottom()
   } catch { /* noop */ }
 }

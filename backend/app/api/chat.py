@@ -214,6 +214,7 @@ async def chat(
                     role="assistant",
                     content=full_answer,
                     sources=sources_data if sources_data else None,
+                    agent=agent_name,
                 )
                 write_db.add(assistant_msg)
                 await write_db.commit()
