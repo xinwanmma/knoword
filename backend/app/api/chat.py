@@ -106,7 +106,9 @@ async def chat(
                 "from_cache": False,
             }
 
-            # 3. 运行 prepare 阶段
+            # 3. 运行 prepare 阶段（发出进度事件）
+            yield _sse_event("status", {"message": "正在分析意图..."})
+
             graph = get_compiled_graph()
             thread_id = str(current_user.id)
             config = {"configurable": {"thread_id": thread_id}}

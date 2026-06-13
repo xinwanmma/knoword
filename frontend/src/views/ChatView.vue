@@ -106,6 +106,11 @@
 
         <!-- 正在生成的流式回答 -->
         <div v-if="streaming" class="assistant-block">
+          <!-- 进度状态（生成开始前显示） -->
+          <div v-if="!streamText && streamStatus" class="status-indicator">
+            <span class="status-dot"></span>
+            {{ streamStatus }}
+          </div>
           <!-- Agent 标签 -->
           <div v-if="streamAgent || streamFromCache" class="agent-label">
             <span v-if="streamFromCache" class="agent-tag agent-cache">⚡ 缓存命中</span>
@@ -178,6 +183,7 @@ const streamText = ref('')
 const streamSources = ref([])
 const streamAgent = ref('')
 const streamFromCache = ref(false)
+const streamStatus = ref('')
 const searchMode = ref('selected')
 const selectedKbIds = ref([])
 const knowledgeBases = ref([])
@@ -187,7 +193,11 @@ const showMemoryPanel = ref(false)
 let streamController = null
 
 onMounted(async () => {
-  await Promise.all([loadConversations(), loadKnowledgeBases()])
+  // 等待用户信息加载完成后再请求
+  await userStore.fetchUser().catch(() => {})
+  if (userStore.isLoggedIn) {
+    await Promise.all([loadConversations(), loadKnowledgeBases()])
+  }
 })
 
 async function loadKnowledgeBases() {
@@ -241,6 +251,7 @@ function sendMessage() {
   streamSources.value = []
   streamAgent.value = ''
   streamFromCache.value = false
+  streamStatus.value = '正在思考...'
   streaming.value = true
   scrollToBottom()
 
@@ -267,6 +278,9 @@ function sendMessage() {
     onCache: (data) => {
       streamFromCache.value = data.hit
     },
+    onStatus: (data) => {
+      streamStatus.value = data.message
+    },
     onDone: (data) => {
       streaming.value = false
       currentConvId.value = data.conversation_id
@@ -280,6 +294,8 @@ function sendMessage() {
       streamText.value = ''
       streamSources.value = []
       streamAgent.value = ''
+      streamFromCache.value = false
+      streamStatus.value = ''
       loadConversations()
       scrollToBottom()
     },
@@ -290,6 +306,7 @@ function sendMessage() {
       streamSources.value = []
       streamAgent.value = ''
       streamFromCache.value = false
+      streamStatus.value = ''
     },
   })
 }
@@ -499,5 +516,30 @@ function scrollToBottom() {
 .agent-cache {
   background: #fdf6ec;
   color: #e6a23c;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #f4f4f5;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #909399;
+  margin-bottom: 8px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #409eff;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
 }
 </style>

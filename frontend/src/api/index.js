@@ -82,7 +82,7 @@ export const categoryAPI = {
 
 // 对话（SSE 流式）
 export const chatAPI = {
-  stream: (data, { onToken, onSources, onDone, onError, onAgent, onCache }) => {
+  stream: (data, { onToken, onSources, onDone, onError, onAgent, onCache, onStatus }) => {
     const token = localStorage.getItem('token')
     const controller = new AbortController()
 
@@ -128,6 +128,7 @@ export const chatAPI = {
                   const parsed = JSON.parse(rawData)
                   if (eventType === 'sources') onSources(parsed)
                   else if (eventType === 'agent') onAgent && onAgent(parsed)
+                  else if (eventType === 'status') onStatus && onStatus(parsed)
                   else if (eventType === 'cache') onCache && onCache(parsed)
                   else if (eventType === 'done') onDone(parsed)
                   else if (eventType === 'error') onError(parsed.message || '生成失败')
