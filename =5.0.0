@@ -1,6 +1,0 @@
-Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple
-Collecting neo4j
-  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/e6/cf/1c3795866cefaac6e648d4e98c373cafd97810f6e317c307371007ab4abb/neo4j-6.2.0-py3-none-any.whl (327 kB)
-Requirement already satisfied: pytz in c:\users\13596\appdata\local\programs\python\python312\lib\site-packages (from neo4j) (2026.1.post1)
-Installing collected packages: neo4j
-Successfully installed neo4j-6.2.0
