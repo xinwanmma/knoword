@@ -1,7 +1,7 @@
 """LLM Provider 模块化。
 
 按 model 字符串自动选择 provider：
-- "mimo-2.5" / "mimo-v2.5-pro" → MiMoProvider
+- "mimo-v2.5" / "mimo-v2.5-pro" → MiMoProvider
 - "deepseek-v4-flash"          → DeepSeekProvider
 - "GLM-4.5-flash"              → GLMProvider
 """

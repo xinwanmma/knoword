@@ -159,7 +159,7 @@ app/services/llm_provider/
 ├── __init__.py
 ├── base.py                  # LLMProvider 抽象基类
 ├── factory.py               # 创建实例
-├── mimo.py                  # mimo-2.5 / mimo-2.5-pro
+├── mimo.py                  # mimo-v2.5 / mimo-v2.5-pro
 ├── deepseek.py              # deepseek-v4-flash
 └── glm.py                   # GLM-4.5-flash
 ```
@@ -179,8 +179,8 @@ class LLMProvider(ABC):
 #### Factory
 ```python
 LLM_REGISTRY = {
-    "mimo-2.5": (settings.MIMO_BASE_URL, settings.MIMO_API_KEY, settings.MIMO_MODEL),
-    "mimo-2.5-pro": (settings.MIMO_BASE_URL, settings.MIMO_API_KEY, "mimo-v2.5-pro"),
+    "mimo-v2.5": (settings.MIMO_BASE_URL, settings.MIMO_API_KEY, settings.MIMO_MODEL),
+    "mimo-v2.5-pro": (settings.MIMO_BASE_URL, settings.MIMO_API_KEY, "mimo-v2.5-pro"),
     "deepseek-v4-flash": (settings.DEEPSEEK_BASE_URL, settings.DEEPSEEK_API_KEY, settings.DEEPSEEK_MODEL),
     "GLM-4.5-flash": (settings.GLM_BASE_URL, settings.GLM_API_KEY, settings.GLM_MODEL),
 }
@@ -454,7 +454,7 @@ class KnowledgeBaseCreate(BaseModel):
 MIMO_BASE_URL=https://api.xiaomimimo.com/v1
 MIMO_API_KEY=                       # ← 用户填
 MIMO_MODEL=mimo-v2.5-pro            # 默认生成模型（高级别）
-MIMO_LITE_MODEL=mimo-2.5            # LLM-as-Judge 固定使用 mimo-2.5
+MIMO_LITE_MODEL=mimo-v2.5            # LLM-as-Judge 固定使用 mimo-v2.5
 
 # ============================================
 # DeepSeek LLM
@@ -505,10 +505,10 @@ SILICONFLOW_RERANK_MODEL=Qwen/Qwen3-Reranker-4B
 SILICONFLOW_RERANK_URL=https://api.siliconflow.cn/v1/rerank
 
 # ============================================
-# 评估 (LLM-as-Judge) — 固定使用 mimo-2.5
+# 评估 (LLM-as-Judge) — 固定使用 mimo-v2.5
 # ============================================
 # 不再单独配置 EVAL_JUDGE_MODEL，统一从 MIMO_LITE_MODEL 读取
-# 即：评估时永远用 settings.MIMO_LITE_MODEL（默认 mimo-2.5）
+# 即：评估时永远用 settings.MIMO_LITE_MODEL（默认 mimo-v2.5）
 # base_url 与 api_key 复用 MIMO_BASE_URL / MIMO_API_KEY
 
 # ============================================
@@ -529,7 +529,7 @@ DEFAULT_EVAL_CONCURRENCY=4          # 评估并行度（每个 run 内同时跑 
 MIMO_BASE_URL: str = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
 MIMO_API_KEY: str = os.getenv("MIMO_API_KEY", "")
 MIMO_MODEL: str = os.getenv("MIMO_MODEL", "mimo-v2.5-pro")
-MIMO_LITE_MODEL: str = os.getenv("MIMO_LITE_MODEL", "mimo-2.5")  # 评估 Judge 固定用
+MIMO_LITE_MODEL: str = os.getenv("MIMO_LITE_MODEL", "mimo-v2.5")  # 评估 Judge 固定用
 
 # DeepSeek
 DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
@@ -881,7 +881,7 @@ class EvalRunner:
         retrieved = await self._retrieve(task)
         # 2. 生成（按 generation_model 调用对应 LLM）
         answer = await self._generate(task, retrieved)
-        # 3. Judge（固定 mimo-2.5）
+        # 3. Judge（固定 mimo-v2.5）
         scores = await self._judge(task, answer)
         # 4. 检索指标
         ret_metrics = self._compute_retrieval_metrics(
@@ -963,7 +963,7 @@ def ndcg_at_k(retrieved_ids: list, relevant_ids: list, k: int) -> float:
     return dcg / idcg if idcg > 0 else 0.0
 ```
 
-#### LLM-as-Judge（**固定使用 mimo-2.5**）
+#### LLM-as-Judge（**固定使用 mimo-v2.5**）
 
 > **术语说明**：QA = Question & Answer（问题与答案）。评估数据集的每一条记录就是一对 (question, ground_truth_answer)。
 
@@ -973,14 +973,14 @@ from app.config import settings
 from app.services.llm_provider.factory import LLMFactory
 
 class LLMJudge:
-    """LLM-as-Judge 评分器。固定使用 mimo-2.5（settings.MIMO_LITE_MODEL）。"""
+    """LLM-as-Judge 评分器。固定使用 mimo-v2.5（settings.MIMO_LITE_MODEL）。"""
 
     def __init__(self):
         # 固定从 settings.MIMO_LITE_MODEL 创建，不接受外部覆盖
         self._llm = LLMFactory.create(settings.MIMO_LITE_MODEL)
 
     async def score(self, question: str, ground_truth: str, answer: str) -> dict:
-        """调用 mimo-2.5 对 AI 回答打分。"""
+        """调用 mimo-v2.5 对 AI 回答打分。"""
         prompt = JUDGE_PROMPT.format(
             question=question,
             ground_truth=ground_truth,
@@ -1011,10 +1011,10 @@ JUDGE_PROMPT = """你是 RAG 答案质量评估专家。请基于参考答案评
 ```
 
 **关键约束**：
-- Judge 模型永远是 `mimo-2.5`（即 `MIMO_LITE_MODEL`）
+- Judge 模型永远是 `mimo-v2.5`（即 `MIMO_LITE_MODEL`）
 - base_url / api_key 复用 `MIMO_BASE_URL` / `MIMO_API_KEY`
 - 不允许前端或 API 参数覆盖 Judge 模型
-- 如果 mimo-2.5 接口失败 → 该 task 标记 `judge_error: True`，但不阻塞整个 run
+- 如果 mimo-v2.5 接口失败 → 该 task 标记 `judge_error: True`，但不阻塞整个 run
 
 ### 6.3 报告输出（**两者都要 + 永久保留 + 清晰命名**）
 
@@ -1136,7 +1136,7 @@ Markdown 示例：
 - Embedding: qwen3-embedding:0.6b, shibing624/text2vec-base-chinese
 - Retrieval: vector, bm25, rerank
   - Rerank: BAAI/bge-reranker-base, Qwen/Qwen3-Reranker-4B
-- Generation: mimo-2.5, deepseek-v4-flash, GLM-4.5-flash
+- Generation: mimo-v2.5, deepseek-v4-flash, GLM-4.5-flash
 
 ## 检索指标汇总
 | Embedding | Retrieval | Rerank | Hit@5 | MRR | NDCG@5 |
@@ -1150,7 +1150,7 @@ Markdown 示例：
 ## 生成质量汇总
 | Generation | Faithfulness | Relevance | Completeness |
 | --- | --- | --- | --- |
-| mimo-2.5 | 4.2 | 4.5 | 4.1 |
+| mimo-v2.5 | 4.2 | 4.5 | 4.1 |
 | deepseek-v4-flash | 4.0 | 4.3 | 3.9 |
 | GLM-4.5-flash | 3.9 | 4.2 | 3.8 |
 | ... | | | |
@@ -1251,7 +1251,7 @@ async def delete_run(run_id, ...):
 │    └ 选中 rerank 时，展开：              │
 │      Rerank 模型: ☑bge-reranker-base      │
 │                   ☑Qwen3-Reranker-4B     │
-│  Generation: ☑mimo-2.5 ☑deepseek ☑glm    │
+│  Generation: ☑mimo-v2.5 ☑deepseek ☑glm    │
 │  数据集: [已有 20 题 ▼] [或自动生成]      │
 │  QA 数量: [20]  （默认 20，可改）          │
 │  并行度:  [4]   （1-8）                   │
@@ -1591,7 +1591,7 @@ frontend/src/
 - [ ] 管理员可配置 KB 的 embedding/chunking/retrieval/rerank
 - [ ] 管理员可启动自定义评估（多模型组合，含 rerank 维度）
 - [ ] **评估自动生成 QA 数据集默认 20 道**（可改）
-- [ ] **LLM-as-Judge 固定使用 mimo-2.5**（不可改）
+- [ ] **LLM-as-Judge 固定使用 mimo-v2.5**（不可改）
 - [ ] **评估并行运行（默认 4 路，可在 UI 调 1-8）**
 - [ ] **评估中途停止后，已完成结果保留，可续跑**
 - [ ] **评估崩溃/重启后可断点续传**（resume API）
@@ -1610,7 +1610,7 @@ frontend/src/
 
 ### A. 评估核心参数
 
-1. ✅ **LLM-as-Judge 固定使用 `mimo-2.5`**（即 `MIMO_LITE_MODEL`），不开放配置
+1. ✅ **LLM-as-Judge 固定使用 `mimo-v2.5`**（即 `MIMO_LITE_MODEL`），不开放配置
    - 模型路径用默认 `MIMO_BASE_URL = https://api.xiaomimimo.com/v1`
    - API key 用 `MIMO_API_KEY`（和你对话用的同一个）
 2. ✅ **默认生成 20 道 QA**（来自 `DEFAULT_EVAL_QA_COUNT=20`，UI 可改）

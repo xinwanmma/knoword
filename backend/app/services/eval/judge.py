@@ -1,4 +1,4 @@
-"""LLM-as-Judge 评分器 — 固定使用 mimo-2.5。"""
+"""LLM-as-Judge 评分器 — 固定使用 mimo-v2.5。"""
 import json
 import logging
 import re
@@ -30,11 +30,11 @@ JUDGE_PROMPT = """你是 RAG 答案质量评估专家。请基于参考答案评
 
 
 class LLMJudge:
-    """LLM-as-Judge 评分器。固定使用 mimo-2.5（settings.MIMO_LITE_MODEL）。
+    """LLM-as-Judge 评分器。固定使用 mimo-v2.5（settings.MIMO_LITE_MODEL）。
 
     关键约束：
     - Judge 模型永远从 settings.MIMO_LITE_MODEL 创建，不接受外部覆盖
-    - 如果 mimo-2.5 接口失败 → 返回 judge_error 标记，不抛异常
+    - 如果 mimo-v2.5 接口失败 → 返回 judge_error 标记，不抛异常
     """
 
     def __init__(self):
@@ -42,7 +42,7 @@ class LLMJudge:
         self._llm = self._provider.get_chat_model(temperature=0.1)
 
     async def score(self, question: str, ground_truth: str, answer: str) -> Dict:
-        """调用 mimo-2.5 对 AI 回答打分。"""
+        """调用 mimo-v2.5 对 AI 回答打分。"""
         prompt = JUDGE_PROMPT.format(
             question=question,
             ground_truth=ground_truth,

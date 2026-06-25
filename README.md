@@ -26,7 +26,7 @@
 | Embedding | Ollama / HuggingFace（离线）/ SiliconFlow |
 | Rerank | HuggingFace CrossEncoder / SiliconFlow |
 | 向量库 | ChromaDB（本地持久化） |
-| 评估 | RAGAS（可选）+ LLM-as-Judge（mimo-2.5） |
+| 评估 | RAGAS（可选）+ LLM-as-Judge（mimo-v2.5） |
 | 前端 | Vue3 + Vite + Element Plus |
 | 认证 | JWT + bcrypt |
 
@@ -104,7 +104,7 @@ backend/
 │       ├── retrieval/             # ★ Retrieval 工厂（vector/bm25/rerank/graph）
 │       ├── rerank/                # ★ Rerank 工厂（HF CrossEncoder/SiliconFlow）
 │       ├── eval/                  # ★ 评估系统
-│       │   ├── judge.py           #   LLM-as-Judge（mimo-2.5 固定）
+│       │   ├── judge.py           #   LLM-as-Judge（mimo-v2.5 固定）
 │       │   ├── metrics.py         #   检索指标（hit/mrr/ndcg）
 │       │   ├── dataset_builder.py #   自动生成 QA 数据集
 │       │   ├── runner.py          #   断点续传 runner
@@ -175,7 +175,7 @@ rerank = get_rerank_provider("Qwen/Qwen3-Reranker-4B")   # 云端
 
 1. **新建评估**：选 KB → 选数据集（手动 / 自动生成 20 道）→ 勾选要对比的 Embedding / Retrieval / Rerank / LLM 组合
 2. **断点续传**：每个 task 立即 commit，进程被杀后可恢复
-3. **LLM-as-Judge**：每个 task 完成后用 mimo-2.5 打 3 个分（faithfulness / relevance / completeness）
+3. **LLM-as-Judge**：每个 task 完成后用 mimo-v2.5 打 3 个分（faithfulness / relevance / completeness）
 4. **RAGAS**（可选）：run 结束后批量跑 6 维评估
    - faithfulness（防幻觉）
    - answer_relevancy（答案相关度）
@@ -196,7 +196,7 @@ rerank = get_rerank_provider("Qwen/Qwen3-Reranker-4B")   # 云端
 |------|--------|------|
 | `MIMO_API_KEY` | *(空)* | **必填**，从 https://api.xiaomimimo.com/ 申请 |
 | `MIMO_MODEL` | `mimo-v2.5-pro` | 默认生成模型 |
-| `MIMO_LITE_MODEL` | `mimo-2.5` | LLM-as-Judge 固定使用 |
+| `MIMO_LITE_MODEL` | `mimo-v2.5` | LLM-as-Judge 固定使用 |
 | `DEEPSEEK_API_KEY` | *(空)* | 可选，启用 DeepSeek |
 | `GLM_API_KEY` | *(空)* | 可选，启用 GLM |
 | `OLLAMA_EMBED_MODEL` | `qwen3-embedding:0.6b` | 本地 embedding |

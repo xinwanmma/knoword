@@ -14,7 +14,7 @@ RAGAS 提供 6 个核心指标：
 - RAGAS 跑完后把分数回填到 evaluation_results.ragas_scores
 
 关键设计：
-- 用 mimo-2.5 作为 RAGAS 用的 LLM（复用 settings.MIMO_LITE_MODEL）
+- 用 mimo-v2.5 作为 RAGAS 用的 LLM（复用 settings.MIMO_LITE_MODEL）
 - 用 ollama qwen3-embedding:0.6b 作为 RAGAS 用的 embedding
 - RAGAS 一次性把整批数据喂进去，**远快于**逐个样本调用
 - 失败时返回空分数，不阻塞整个 run
@@ -68,7 +68,7 @@ def _try_import_ragas():
 
 
 def _build_ragas_llm():
-    """构造 RAGAS 用的 LLM（mimo-2.5）。"""
+    """构造 RAGAS 用的 LLM（mimo-v2.5）。"""
     from ragas.llms import LangchainLLMWrapper
     from langchain_openai import ChatOpenAI
 

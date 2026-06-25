@@ -34,7 +34,7 @@ class GoldenDatasetBuilder:
     DEFAULT_QA_COUNT = 20
 
     def __init__(self, llm_model: str | None = None):
-        # 用 mimo-2.5 生成 QA（轻量即可）
+        # 用 mimo-v2.5 生成 QA（轻量即可）
         self._provider = get_llm_provider(llm_model or settings.MIMO_LITE_MODEL)
         self._llm = self._provider.get_chat_model(temperature=0.5)
 

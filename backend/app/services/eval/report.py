@@ -136,7 +136,7 @@ class ReportGenerator:
         if cfg.get('rerank_models'):
             lines.append(f"- **Rerank**: {', '.join(cfg.get('rerank_models', []))}")
         lines.append(f"- **Generation**: {', '.join(cfg.get('generation_models', []))}")
-        lines.append(f"- **LLM-as-Judge**: mimo-2.5（固定）")
+        lines.append(f"- **LLM-as-Judge**: mimo-v2.5（固定）")
         lines.append(f"- **RAGAS**: {'✅ 启用' if cfg.get('use_ragas') else '❌ 未启用'}")
         lines.append("")
 
@@ -165,7 +165,7 @@ class ReportGenerator:
         # 生成质量（LLM-as-Judge）
         gen_results = [r for r in results if r.generation_scores and not r.judge_error]
         if gen_results:
-            lines.append("## 生成质量（LLM-as-Judge · mimo-2.5）")
+            lines.append("## 生成质量（LLM-as-Judge · mimo-v2.5）")
             lines.append("")
             lines.append("| Generation | Faithfulness | Relevance | Completeness |")
             lines.append("| --- | --- | --- | --- |")

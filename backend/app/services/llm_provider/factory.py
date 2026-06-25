@@ -1,9 +1,9 @@
 """LLM Factory — 按 model 字符串自动选择 provider。
 
 支持别名解析：
-- "mimo-2.5"           → MiMoProvider(model=settings.MIMO_LITE_MODEL)
+- "mimo-v2.5"           → MiMoProvider(model=settings.MIMO_LITE_MODEL)
 - "mimo-v2.5-pro"      → MiMoProvider(model=settings.MIMO_MODEL)
-- "mimo-2.5-pro"       → MiMoProvider (alias)
+- "mimo-v2.5-pro"       → MiMoProvider (alias)
 - "deepseek-v4-flash"  → DeepSeekProvider
 - "GLM-4.5-flash"      → GLMProvider
 """
@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 # provider 类映射（按 model_id 前缀）
 LLM_REGISTRY: Dict[str, Type[LLMProvider]] = {
     "mimo-": MiMoProvider,
-    "mimo-2.5-pro": MiMoProvider,
-    "mimo-2.5": MiMoProvider,
+    "mimo-v2.5-pro": MiMoProvider,
+    "mimo-v2.5": MiMoProvider,
     "mimo-v2.5-pro": MiMoProvider,
     "deepseek-": DeepSeekProvider,
     "GLM-": GLMProvider,
@@ -59,9 +59,9 @@ def get_llm_provider(model_id: str | None = None) -> LLMProvider:
         raise ValueError(f"未知的 LLM model: {model_id}。可用: {available}")
 
     # MiMo 的别名处理
-    if provider_cls is MiMoProvider and model_id == "mimo-2.5":
+    if provider_cls is MiMoProvider and model_id == "mimo-v2.5":
         provider = MiMoProvider(model=settings.MIMO_LITE_MODEL)
-    elif provider_cls is MiMoProvider and model_id == "mimo-2.5-pro":
+    elif provider_cls is MiMoProvider and model_id == "mimo-v2.5-pro":
         provider = MiMoProvider(model=settings.MIMO_MODEL)
     else:
         provider = provider_cls(model=model_id)
@@ -74,7 +74,7 @@ def get_llm_provider(model_id: str | None = None) -> LLMProvider:
 def list_available_models() -> list[dict]:
     """列出所有可用的 LLM 模型。"""
     return [
-        {"id": "mimo-2.5", "provider": "mimo", "type": "cloud"},
+        {"id": "mimo-v2.5", "provider": "mimo", "type": "cloud"},
         {"id": "mimo-v2.5-pro", "provider": "mimo", "type": "cloud"},
         {"id": "deepseek-v4-flash", "provider": "deepseek", "type": "cloud"},
         {"id": "GLM-4.5-flash", "provider": "glm", "type": "cloud"},

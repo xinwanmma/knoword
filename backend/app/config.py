@@ -37,7 +37,7 @@ class Settings:
     MIMO_BASE_URL: str = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
     MIMO_API_KEY: str = os.getenv("MIMO_API_KEY", "")
     MIMO_MODEL: str = os.getenv("MIMO_MODEL", "mimo-v2.5-pro")
-    MIMO_LITE_MODEL: str = os.getenv("MIMO_LITE_MODEL", "mimo-2.5")
+    MIMO_LITE_MODEL: str = os.getenv("MIMO_LITE_MODEL", "mimo-v2.5")
     MIMO_LLM_TEMPERATURE: float = float(os.getenv("MIMO_LLM_TEMPERATURE", "0.7"))
 
     # --- DeepSeek LLM（云端 API，OpenAI 兼容） ---

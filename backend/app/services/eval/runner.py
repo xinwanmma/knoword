@@ -207,7 +207,7 @@ class EvalRunner:
         response = await llm.ainvoke([{"role": "user", "content": prompt_text}])
         answer = response.content if hasattr(response, "content") else str(response)
 
-        # 3. Judge（固定 mimo-2.5）
+        # 3. Judge（固定 mimo-v2.5）
         scores = await self._judge.score(
             question=task["question"],
             ground_truth=task["ground_truth"],

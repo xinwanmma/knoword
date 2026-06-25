@@ -50,7 +50,7 @@ class EvalRunCreate(BaseModel):
     generation_models: list[str] = Field(default_factory=list)
     # 默认参数
     concurrency: int = 4
-    # LLM-as-Judge 固定为 mimo-2.5（不允许覆盖）
+    # LLM-as-Judge 固定为 mimo-v2.5（不允许覆盖）
     # RAGAS 评估开关
     use_ragas: bool = False  # 跑完后再批量评估（慢但更全面）
 

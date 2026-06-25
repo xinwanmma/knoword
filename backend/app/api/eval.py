@@ -162,7 +162,7 @@ async def create_run(
         "rerank_models": req.rerank_models,
         "generation_models": req.generation_models,
         "concurrency": req.concurrency,
-        "judge_model": "mimo-2.5",  # 固定（前端不可改）
+        "judge_model": "mimo-v2.5",  # 固定（前端不可改）
         "use_ragas": req.use_ragas,
     }
     run = EvaluationRun(

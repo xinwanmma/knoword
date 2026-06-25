@@ -6,7 +6,7 @@ from app.services.llm_provider.openai_compatible import OpenAICompatibleProvider
 class MiMoProvider(OpenAICompatibleProvider):
     """MiMo 官方 LLM。
 
-    支持：mimo-2.5（轻量，用于 Judge）、mimo-v2.5-pro（高级，用于生成）。
+    支持：mimo-v2.5（轻量，用于 Judge）、mimo-v2.5-pro（高级，用于生成）。
     """
 
     def __init__(self, model: str | None = None):

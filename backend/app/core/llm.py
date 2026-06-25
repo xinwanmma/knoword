@@ -2,7 +2,7 @@
 
 保留此文件作为兼容入口，新代码请直接使用：
     from app.services.llm_provider import get_llm_provider
-    llm = get_llm_provider("mimo-2.5")
+    llm = get_llm_provider("mimo-v2.5")
 """
 import logging
 

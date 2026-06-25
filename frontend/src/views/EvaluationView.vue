@@ -70,7 +70,7 @@
           </el-form-item>
 
           <el-form-item label="LLM-as-Judge">
-            <el-tag type="info">mimo-2.5（固定）</el-tag>
+            <el-tag type="info">mimo-v2.5（固定）</el-tag>
             <span style="margin-left: 10px; color: #999">不可修改</span>
           </el-form-item>
 
@@ -166,7 +166,7 @@
           <li>Retrieval: {{ reportData.config.retrieval_strategies?.join(', ') }}</li>
           <li v-if="reportData.config.rerank_models?.length">Rerank: {{ reportData.config.rerank_models.join(', ') }}</li>
           <li>Generation: {{ reportData.config.generation_models?.join(', ') }}</li>
-          <li>LLM-as-Judge: mimo-2.5（固定）</li>
+          <li>LLM-as-Judge: mimo-v2.5（固定）</li>
           <li>RAGAS: {{ reportData.config.use_ragas ? '✅ 启用' : '❌ 未启用' }}</li>
         </ul>
         <h4>Summary</h4>
