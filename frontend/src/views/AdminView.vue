@@ -1,184 +1,353 @@
 <template>
   <div class="admin-page">
-    <h2>管理员面板</h2>
+    <h2 class="page-title">管理后台</h2>
 
-    <el-tabs v-model="activeTab">
-      <!-- 用户管理 -->
-      <el-tab-pane label="用户管理" name="users">
-        <div class="section-header">
-          <h3>用户列表</h3>
-          <el-button type="primary" size="small" @click="showCategoryDialog">
-            <el-icon><Plus /></el-icon> 添加分类
-          </el-button>
+    <el-tabs v-model="activeTab" class="admin-tabs">
+      <!-- 统计 Tab -->
+      <el-tab-pane label="系统统计" name="stats">
+        <div v-if="stats" class="stats-grid">
+          <el-card class="stat-card" shadow="hover">
+            <div class="stat-icon" style="background: #ecf5ff; color: #409eff;">
+              <el-icon size="28"><User /></el-icon>
+            </div>
+            <div class="stat-body">
+              <div class="stat-value">{{ stats.users.total }}</div>
+              <div class="stat-label">用户总数</div>
+              <div class="stat-meta">
+                管理员 {{ stats.users.admins }} · 普通 {{ stats.users.regular }}
+              </div>
+            </div>
+          </el-card>
+
+          <el-card class="stat-card" shadow="hover">
+            <div class="stat-icon" style="background: #f0f9eb; color: #67c23a;">
+              <el-icon size="28"><Folder /></el-icon>
+            </div>
+            <div class="stat-body">
+              <div class="stat-value">{{ stats.knowledge_bases }}</div>
+              <div class="stat-label">知识库总数</div>
+            </div>
+          </el-card>
+
+          <el-card class="stat-card" shadow="hover">
+            <div class="stat-icon" style="background: #fdf6ec; color: #e6a23c;">
+              <el-icon size="28"><Document /></el-icon>
+            </div>
+            <div class="stat-body">
+              <div class="stat-value">{{ stats.documents.total }}</div>
+              <div class="stat-label">文档总数</div>
+              <div class="stat-meta">
+                就绪 {{ stats.documents.ready }} · 处理中 {{ stats.documents.processing }}
+              </div>
+            </div>
+          </el-card>
+
+          <el-card class="stat-card" shadow="hover">
+            <div class="stat-icon" style="background: #fef0f0; color: #f56c6c;">
+              <el-icon size="28"><ChatLineRound /></el-icon>
+            </div>
+            <div class="stat-body">
+              <div class="stat-value">{{ stats.conversations }}</div>
+              <div class="stat-label">对话总数</div>
+              <div class="stat-meta">消息 {{ stats.messages }} 条</div>
+            </div>
+          </el-card>
         </div>
-        <el-table :data="users" style="width: 100%">
-          <el-table-column prop="username" label="用户名" width="150" />
+
+        <el-skeleton v-else :rows="4" animated />
+      </el-tab-pane>
+
+      <!-- 用户管理 Tab -->
+      <el-tab-pane label="用户管理" name="users">
+        <el-table :data="users" v-loading="loadingUsers" stripe>
+          <el-table-column prop="username" label="用户名" min-width="120" />
           <el-table-column prop="email" label="邮箱" min-width="200" />
-          <el-table-column label="角色" width="100">
+          <el-table-column label="角色" width="120">
             <template #default="{ row }">
-              <el-tag v-if="row.is_admin" type="warning" size="small">管理员</el-tag>
-              <el-tag v-else size="small">用户</el-tag>
+              <el-tag v-if="row.is_admin" type="danger" size="small">管理员</el-tag>
+              <el-tag v-else type="info" size="small">普通用户</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="created_at" label="注册时间" width="180">
+          <el-table-column label="注册时间" width="180">
             <template #default="{ row }">
               {{ formatDate(row.created_at) }}
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="140">
+          <el-table-column label="操作" width="200" fixed="right">
             <template #default="{ row }">
               <el-button
+                v-if="!isSelf(row)"
                 size="small"
-                :type="row.is_admin ? 'info' : 'warning'"
-                text
-                @click="toggleAdmin(row)"
+                :type="row.is_admin ? 'warning' : 'primary'"
+                @click="toggleAdminRole(row)"
               >
                 {{ row.is_admin ? '取消管理员' : '设为管理员' }}
+              </el-button>
+              <el-tag v-else size="small" type="info">当前用户</el-tag>
+              <el-button
+                v-if="!isSelf(row)"
+                size="small"
+                type="danger"
+                @click="deleteUser(row)"
+              >
+                删除
               </el-button>
             </template>
           </el-table-column>
         </el-table>
       </el-tab-pane>
 
-      <!-- 分类管理 -->
-      <el-tab-pane label="分类管理" name="categories">
-        <div class="section-header">
-          <h3>知识库分类</h3>
-          <el-button type="primary" size="small" @click="showCategoryDialog">
-            <el-icon><Plus /></el-icon> 添加分类
-          </el-button>
-        </div>
-        <el-table :data="categories" style="width: 100%">
-          <el-table-column prop="id" label="ID" width="80" />
-          <el-table-column prop="name" label="分类名称" min-width="200" />
+      <!-- 知识库管理 Tab -->
+      <el-tab-pane label="全局知识库" name="kbs">
+        <el-table :data="kbs" v-loading="loadingKbs" stripe>
+          <el-table-column prop="name" label="知识库名" min-width="160" />
+          <el-table-column label="所有者" width="140">
+            <template #default="{ row }">
+              {{ row.owner_username }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
+          <el-table-column prop="document_count" label="文档数" width="100" />
+          <el-table-column label="创建时间" width="180">
+            <template #default="{ row }">
+              {{ formatDate(row.created_at) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="180" fixed="right">
+            <template #default="{ row }">
+              <el-button size="small" @click="viewKbDocs(row)">查看文档</el-button>
+              <el-button size="small" type="danger" @click="adminDeleteKb(row)">删除</el-button>
+            </template>
+          </el-table-column>
         </el-table>
-
-        <el-dialog v-model="catDialogVisible" title="添加分类" width="400px">
-          <el-input v-model="newCatName" placeholder="分类名称" @keyup.enter="createCategory" />
-          <template #footer>
-            <el-button @click="catDialogVisible = false">取消</el-button>
-            <el-button type="primary" @click="createCategory">创建</el-button>
-          </template>
-        </el-dialog>
-      </el-tab-pane>
-
-      <!-- 系统统计 -->
-      <el-tab-pane label="系统统计" name="stats">
-        <el-row :gutter="20">
-          <el-col :span="8">
-            <el-statistic title="知识库数量" :value="stats.kbCount" />
-          </el-col>
-          <el-col :span="8">
-            <el-statistic title="文档数量" :value="stats.docCount" />
-          </el-col>
-          <el-col :span="8">
-            <el-statistic title="用户数量" :value="stats.userCount" />
-          </el-col>
-        </el-row>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- 查看文档对话框 -->
+    <el-dialog
+      v-model="docsDialogVisible"
+      :title="`${currentKb?.name} 的文档`"
+      width="700px"
+    >
+      <el-table :data="kbDocs" v-loading="loadingDocs" max-height="500">
+        <el-table-column prop="filename" label="文件名" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="file_type" label="类型" width="80" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.status === 'ready'" type="success" size="small">就绪</el-tag>
+            <el-tag v-else-if="row.status === 'processing'" type="warning" size="small">处理中</el-tag>
+            <el-tag v-else type="danger" size="small">失败</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="chunk_count" label="分块" width="80" />
+        <el-table-column label="上传时间" width="170">
+          <template #default="{ row }">
+            {{ formatDate(row.created_at) }}
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, watch } from 'vue'
-import { kbAPI, categoryAPI, adminAPI } from '../api'
-import api from '../api'
-import { Plus } from '@element-plus/icons-vue'
+import { ref, onMounted, onActivated } from 'vue'
+import { adminAPI } from '../api'
+import { useUserStore } from '../stores/user'
+import { User, Folder, Document, ChatLineRound } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-const activeTab = ref('users')
+const userStore = useUserStore()
+
+const activeTab = ref('stats')
+const stats = ref(null)
 const users = ref([])
-const categories = ref([])
-const catDialogVisible = ref(false)
-const newCatName = ref('')
-const stats = reactive({ kbCount: 0, docCount: 0, userCount: 0 })
+const kbs = ref([])
+const kbDocs = ref([])
+const currentKb = ref(null)
+const docsDialogVisible = ref(false)
+const loadingUsers = ref(false)
+const loadingKbs = ref(false)
+const loadingDocs = ref(false)
 
 onMounted(() => {
-  loadTabData(activeTab.value)
+  loadStats()
+  loadUsers()
+  loadAllKbs()
 })
 
-watch(activeTab, (tab) => {
-  loadTabData(tab)
+onActivated(() => {
+  loadStats()
+  loadUsers()
+  loadAllKbs()
 })
 
-async function loadTabData(tab) {
+async function loadStats() {
   try {
-    if (tab === 'users' && users.value.length === 0) {
-      const { data } = await adminAPI.listUsers()
-      users.value = data
-      stats.userCount = data.length
-    } else if (tab === 'categories' && categories.value.length === 0) {
-      const { data } = await categoryAPI.list()
-      categories.value = data
-    } else if (tab === 'stats') {
-      const { data: kbRes } = await kbAPI.list()
-      stats.kbCount = kbRes.length
-      stats.docCount = kbRes.reduce((sum, kb) => sum + (kb.document_count || 0), 0)
-    }
+    const { data } = await adminAPI.getStats()
+    stats.value = data
   } catch (err) { console.error(err) }
 }
 
-async function toggleAdmin(user) {
-  const action = user.is_admin ? '取消管理员' : '设为管理员'
+async function loadUsers() {
+  loadingUsers.value = true
+  try {
+    const { data } = await adminAPI.listUsers()
+    users.value = data
+  } catch (err) { console.error(err) }
+  loadingUsers.value = false
+}
+
+async function loadAllKbs() {
+  loadingKbs.value = true
+  try {
+    const { data } = await adminAPI.listAllKbs()
+    kbs.value = data
+  } catch (err) { console.error(err) }
+  loadingKbs.value = false
+}
+
+function isSelf(user) {
+  return user.id === userStore.user?.id
+}
+
+async function toggleAdminRole(user) {
   try {
     await ElMessageBox.confirm(
-      `确定将 ${user.username} ${action}？`,
-      '确认操作',
-      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+      `确认将 ${user.username} 设为${user.is_admin ? '普通用户' : '管理员'}？`,
+      '确认',
+      { type: 'warning' }
     )
-    const { data } = await adminAPI.toggleAdmin(user.id)
-    ElMessage.success(data.message)
-    await loadTabData('users')
-  } catch (err) { console.error(err) }
-}
-
-function showCategoryDialog() {
-  newCatName.value = ''
-  catDialogVisible.value = true
-}
-
-async function createCategory() {
-  if (!newCatName.value.trim()) {
-    ElMessage.warning('请输入分类名称')
-    return
+    await adminAPI.toggleAdmin(user.id)
+    ElMessage.success('已更新')
+    await loadUsers()
+    await loadStats()
+  } catch (err) {
+    if (err !== 'cancel' && err !== 'close') console.error(err)
   }
-  try {
-    await categoryAPI.create({ name: newCatName.value })
-    ElMessage.success('创建成功')
-    catDialogVisible.value = false
-    const { data } = await categoryAPI.list()
-    categories.value = data
-  } catch (err) { console.error(err) }
 }
 
-function formatDate(dateStr) {
-  if (!dateStr) return '-'
-  return new Date(dateStr).toLocaleString('zh-CN')
+async function deleteUser(user) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除用户「${user.username}」？该用户的所有知识库、文档、对话将被一并删除，且不可恢复！`,
+      '危险操作',
+      {
+        type: 'error',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
+      }
+    )
+    await adminAPI.deleteUser(user.id)
+    ElMessage.success('已删除')
+    await loadUsers()
+    await loadStats()
+  } catch (err) {
+    if (err !== 'cancel' && err !== 'close') console.error(err)
+  }
+}
+
+async function viewKbDocs(kb) {
+  currentKb.value = kb
+  docsDialogVisible.value = true
+  loadingDocs.value = true
+  try {
+    const { data } = await adminAPI.listKbDocs(kb.id)
+    kbDocs.value = data
+  } catch (err) { console.error(err) }
+  loadingDocs.value = false
+}
+
+async function adminDeleteKb(kb) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除知识库「${kb.name}」（所有者: ${kb.owner_username}）？\n所有文档和向量数据将被清除。`,
+      '危险操作',
+      {
+        type: 'error',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
+      }
+    )
+    await adminAPI.deleteKb(kb.id)
+    ElMessage.success('已删除')
+    await loadAllKbs()
+    await loadStats()
+  } catch (err) {
+    if (err !== 'cancel' && err !== 'close') console.error(err)
+  }
+}
+
+function formatDate(iso) {
+  if (!iso) return '-'
+  return new Date(iso).toLocaleString('zh-CN', { hour12: false })
 }
 </script>
 
 <style scoped>
 .admin-page {
-  padding: 20px;
+  padding: 20px 24px;
   height: 100vh;
   overflow-y: auto;
+  background: #f5f7fa;
 }
 
-.admin-page h2 {
+.page-title {
+  margin: 0 0 16px;
   color: #303133;
-  margin-bottom: 20px;
+  font-size: 20px;
 }
 
-.section-header {
+.admin-tabs {
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.stat-card {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
+  gap: 16px;
+  border-radius: 12px;
 }
 
-.section-header h3 {
+.stat-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.stat-body {
+  flex: 1;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #303133;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 13px;
   color: #606266;
-  font-size: 16px;
+  margin-top: 2px;
+}
+
+.stat-meta {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
 }
 </style>

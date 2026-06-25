@@ -4,6 +4,7 @@ import logging
 
 import httpx
 from fastapi import APIRouter
+from sqlalchemy import text
 
 from app.config import settings
 from app.db.database import async_session_factory
@@ -16,13 +17,13 @@ router = APIRouter(tags=["系统"])
 
 @router.get("/health")
 async def health_check():
-    """检查所有依赖服务是否可用（复用单个 httpx client）。"""
+    """检查所有依赖服务是否可用。"""
     checks = {}
 
     # 检查 PostgreSQL
     try:
         async with async_session_factory() as session:
-            await session.execute(__import__("sqlalchemy").text("SELECT 1"))
+            await session.execute(text("SELECT 1"))
         checks["database"] = True
     except Exception:
         checks["database"] = False
@@ -30,24 +31,36 @@ async def health_check():
     # 检查 ChromaDB
     checks["chromadb"] = check_chromadb()
 
-    # 检查 Ollama（单次连接，复用 client）
+    # 检查 MiMo LLM（云端 API）
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.MIMO_BASE_URL, timeout=10.0
+        ) as client:
+            headers = {"Authorization": f"Bearer {settings.MIMO_API_KEY}"}
+            models_resp = await client.get("/models", headers=headers)
+            if models_resp.status_code == 200:
+                data = models_resp.json()
+                installed = {m.get("id", "") for m in data.get("data", [])}
+                checks["mimo_llm"] = any(
+                    settings.MIMO_MODEL in m
+                    for m in installed
+                )
+            else:
+                checks["mimo_llm"] = False
+    except Exception:
+        checks["mimo_llm"] = False
+
+    # 检查 Ollama（仅用于 embedding）
     try:
         async with httpx.AsyncClient(
             base_url=settings.OLLAMA_BASE_URL, timeout=10.0
         ) as client:
-            # 一次 /api/tags 同时检查服务 + 模型列表
             tags_resp = await client.get("/api/tags")
             ollama_running = tags_resp.status_code == 200
 
             if ollama_running:
                 data = tags_resp.json()
                 installed = {m.get("name", "") for m in data.get("models", [])}
-                checks["ollama_llm"] = any(
-                    settings.OLLAMA_LLM_MODEL == m
-                    or settings.OLLAMA_LLM_MODEL + ":latest" == m
-                    for m in installed
-                )
-                # Embedding 用同一个 client 检查
                 try:
                     embed_resp = await client.post(
                         "/api/embeddings",
@@ -58,10 +71,8 @@ async def health_check():
                 except Exception:
                     checks["ollama_embed"] = False
             else:
-                checks["ollama_llm"] = False
                 checks["ollama_embed"] = False
     except Exception:
-        checks["ollama_llm"] = False
         checks["ollama_embed"] = False
 
     all_ok = all(checks.values())

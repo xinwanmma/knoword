@@ -22,17 +22,8 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-    knowledge_bases = relationship("KnowledgeBase", back_populates="owner")
-    conversations = relationship("Conversation", back_populates="user")
-
-
-class Category(Base):
-    __tablename__ = "categories"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), unique=True, nullable=False)
-
-    knowledge_bases = relationship("KnowledgeBase", back_populates="category")
+    knowledge_bases = relationship("KnowledgeBase", back_populates="owner", cascade="all, delete-orphan")
+    conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
 
 
 class KnowledgeBase(Base):
@@ -41,13 +32,21 @@ class KnowledgeBase(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    is_global = Column(Boolean, default=False)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+    # 策略配置（Phase 3 新增）
+    embedding_model = Column(String(100), default="qwen3-embedding:0.6b")
+    chunking_strategy = Column(String(50), default="recursive")
+    chunk_size = Column(Integer, default=500)
+    chunk_overlap = Column(Integer, default=50)
+    retrieval_strategy = Column(String(50), default="vector")
+    # rerank 配置（仅 retrieval_strategy="rerank" 时生效）
+    rerank_model = Column(String(100), default="BAAI/bge-reranker-base")
+    rerank_top_n = Column(Integer, default=20)
+    graphrag_indexed = Column(Boolean, default=False)
+
     owner = relationship("User", back_populates="knowledge_bases")
-    category = relationship("Category", back_populates="knowledge_bases")
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
 
 
@@ -89,10 +88,9 @@ class Message(Base):
         ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False,
     )
-    role = Column(String(20), nullable=False)  # user / assistant / system
+    role = Column(String(20), nullable=False)  # user / assistant
     content = Column(Text, nullable=False)
     sources = Column(JSONB, nullable=True)
-    agent = Column(String(50), nullable=True)  # rag / general / cache
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     conversation = relationship("Conversation", back_populates="messages")

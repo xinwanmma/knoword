@@ -43,17 +43,13 @@ if errorlevel 1 (
     timeout /t 3 /nobreak >nul
 )
 
-curl -s http://localhost:11434/api/tags 2>nul | findstr "qwen3.5" >nul
-if errorlevel 1 (
-    echo   [INFO] Pulling qwen3.5:2b ...
-    ollama pull qwen3.5:2b
-)
 curl -s http://localhost:11434/api/tags 2>nul | findstr "qwen3-embedding" >nul
 if errorlevel 1 (
     echo   [INFO] Pulling qwen3-embedding:0.6b ...
     ollama pull qwen3-embedding:0.6b
 )
-echo   [OK] Models ready
+echo   [OK] Embedding model ready
+echo   [INFO] LLM: MiMo Cloud API (set MIMO_API_KEY in backend\.env)
 
 echo.
 echo [2/5] Installing backend dependencies...

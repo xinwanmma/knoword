@@ -4,7 +4,7 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,18 +50,18 @@ async def _save_file(file: UploadFile, kb_id: int) -> tuple[str, str]:
 
 @router.post("/upload", response_model=list[DocumentOut], status_code=status.HTTP_201_CREATED)
 async def upload_documents(
-    kb_id: int,
-    background_tasks: BackgroundTasks,
+    kb_id: int = Query(..., description="目标知识库 ID"),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """上传文档到指定知识库（支持多文件）。异步处理，上传后立即返回。"""
-    # 校验知识库存在且有权限
+    # 校验知识库存在且属于当前用户
     kb = await db.get(KnowledgeBase, kb_id)
     if kb is None:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    if not current_user.is_admin and kb.owner_id != current_user.id:
+    if kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="无权向此知识库上传文档")
 
     saved_docs = []
@@ -126,7 +126,7 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="文档不存在")
 
     kb = await db.get(KnowledgeBase, doc.kb_id)
-    if not current_user.is_admin and (kb is None or kb.owner_id != current_user.id):
+    if kb is None or kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="无权删除此文档")
 
     # 删除向量
@@ -154,7 +154,7 @@ async def reindex_document(
         raise HTTPException(status_code=404, detail="文档不存在")
 
     kb = await db.get(KnowledgeBase, doc.kb_id)
-    if not current_user.is_admin and (kb is None or kb.owner_id != current_user.id):
+    if kb is None or kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="无权操作此文档")
 
     if not os.path.exists(doc.file_path):
@@ -186,7 +186,7 @@ async def list_documents(
     if kb is None:
         raise HTTPException(status_code=404, detail="知识库不存在")
 
-    if not current_user.is_admin and kb.owner_id != current_user.id and not kb.is_global:
+    if kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="无权访问此知识库")
 
     result = await db.execute(

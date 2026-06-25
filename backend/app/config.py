@@ -29,10 +29,53 @@ class Settings:
     # --- ChromaDB ---
     CHROMADB_PATH: str = os.getenv("CHROMADB_PATH", "./data/chromadb")
 
-    # --- Ollama ---
+    # --- Ollama（仅用于 embedding） ---
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_LLM_MODEL: str = os.getenv("OLLAMA_LLM_MODEL", "qwen3.5:2b")
     OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "qwen3-embedding:0.6b")
+
+    # --- MiMo LLM（云端 API，OpenAI 兼容） ---
+    MIMO_BASE_URL: str = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
+    MIMO_API_KEY: str = os.getenv("MIMO_API_KEY", "")
+    MIMO_MODEL: str = os.getenv("MIMO_MODEL", "mimo-v2.5-pro")
+    MIMO_LITE_MODEL: str = os.getenv("MIMO_LITE_MODEL", "mimo-2.5")
+    MIMO_LLM_TEMPERATURE: float = float(os.getenv("MIMO_LLM_TEMPERATURE", "0.7"))
+
+    # --- DeepSeek LLM（云端 API，OpenAI 兼容） ---
+    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+
+    # --- GLM 智谱 LLM（云端 API，OpenAI 兼容） ---
+    GLM_BASE_URL: str = os.getenv("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+    GLM_API_KEY: str = os.getenv("GLM_API_KEY", "")
+    GLM_MODEL: str = os.getenv("GLM_MODEL", "GLM-4.5-flash")
+
+    # --- Embedding: HuggingFace 本地（统一缓存目录） ---
+    HF_EMBED_MODEL: str = os.getenv("HF_EMBED_MODEL", "shibing624/text2vec-base-chinese")
+    HF_CACHE_DIR: str = os.getenv("HF_CACHE_DIR", "C:\\Users\\13596\\.cache\\huggingface\\hub")
+    HF_OFFLINE: bool = os.getenv("HF_OFFLINE", "1") == "1"
+
+    # --- Embedding: SiliconFlow ---
+    SILICONFLOW_BASE_URL: str = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
+    SILICONFLOW_API_KEY: str = os.getenv("SILICONFLOW_API_KEY", "")
+    SILICONFLOW_EMBED_8B: str = os.getenv("SILICONFLOW_EMBED_8B", "Qwen/Qwen3-Embedding-8B")
+    SILICONFLOW_EMBED_4B: str = os.getenv("SILICONFLOW_EMBED_4B", "Qwen/Qwen3-Embedding-4B")
+
+    # --- Rerank: HuggingFace 本地（共享 HF 缓存目录） ---
+    HF_RERANK_MODEL: str = os.getenv("HF_RERANK_MODEL", "BAAI/bge-reranker-base")
+
+    # --- Rerank: SiliconFlow ---
+    SILICONFLOW_RERANK_MODEL: str = os.getenv("SILICONFLOW_RERANK_MODEL", "Qwen/Qwen3-Reranker-4B")
+    SILICONFLOW_RERANK_URL: str = os.getenv(
+        "SILICONFLOW_RERANK_URL", "https://api.siliconflow.cn/v1/rerank"
+    )
+
+    # --- 评估 ---
+    DEFAULT_EVAL_QA_COUNT: int = int(os.getenv("DEFAULT_EVAL_QA_COUNT", "20"))
+    DEFAULT_EVAL_CONCURRENCY: int = int(os.getenv("DEFAULT_EVAL_CONCURRENCY", "4"))
+    EVAL_REPORT_DIR: str = os.getenv("EVAL_REPORT_DIR", "./reports")
+    # RAGAS 评估开关（默认关，因其慢）
+    USE_RAGAS: bool = os.getenv("USE_RAGAS", "false").lower() == "true"
 
     # --- JWT ---
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "change-me-to-a-random-secret")
@@ -56,15 +99,9 @@ class Settings:
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123456")
     ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "admin@example.com")
 
-    # --- Store 会话状态 ---
-    STORE_ENABLED: bool = os.getenv("STORE_ENABLED", "true").lower() == "true"
-    STORE_CACHE_TTL_DAYS: int = int(os.getenv("STORE_CACHE_TTL_DAYS", "30"))
-    STORE_CACHE_SIMILARITY_THRESHOLD: float = float(os.getenv("STORE_CACHE_SIMILARITY_THRESHOLD", "0.9"))
-    STORE_AUTO_EXTRACT: bool = os.getenv("STORE_AUTO_EXTRACT", "true").lower() == "true"
-
     # --- 应用 ---
     APP_NAME: str = "RAG 知识库系统"
-    APP_VERSION: str = "0.1.0"
+    APP_VERSION: str = "0.2.0"
     API_PREFIX: str = "/api"
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173")

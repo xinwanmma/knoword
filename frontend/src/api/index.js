@@ -74,15 +74,9 @@ export const docAPI = {
   listByKb: (kbId) => api.get(`/documents/kb/${kbId}`),
 }
 
-// 分类
-export const categoryAPI = {
-  list: () => api.get('/categories'),
-  create: (data) => api.post('/categories', data),
-}
-
 // 对话（SSE 流式）
 export const chatAPI = {
-  stream: (data, { onToken, onSources, onDone, onError, onAgent, onCache, onStatus }) => {
+  stream: (data, { onToken, onSources, onDone, onError, onStatus }) => {
     const token = localStorage.getItem('token')
     const controller = new AbortController()
 
@@ -121,15 +115,12 @@ export const chatAPI = {
             } else if (line.startsWith('data: ')) {
               const rawData = line.slice(6)
               if (eventType === 'token') {
-                // token 是纯文本，不需要 JSON.parse
                 onToken(rawData)
               } else {
                 try {
                   const parsed = JSON.parse(rawData)
                   if (eventType === 'sources') onSources(parsed)
-                  else if (eventType === 'agent') onAgent && onAgent(parsed)
                   else if (eventType === 'status') onStatus && onStatus(parsed)
-                  else if (eventType === 'cache') onCache && onCache(parsed)
                   else if (eventType === 'done') onDone(parsed)
                   else if (eventType === 'error') onError(parsed.message || '生成失败')
                 } catch {
@@ -157,17 +148,32 @@ export const healthAPI = {
   check: () => api.get('/health'),
 }
 
-// 管理员
+// 管理员后台
 export const adminAPI = {
-  listUsers: () => api.get('/auth/admin/users'),
-  toggleAdmin: (userId) => api.put(`/auth/admin/users/${userId}/toggle-admin`),
+  getStats: () => api.get('/admin/stats'),
+  listUsers: () => api.get('/admin/users'),
+  toggleAdmin: (userId) => api.post(`/admin/users/${userId}/toggle-admin`),
+  deleteUser: (userId) => api.delete(`/admin/users/${userId}`),
+  listAllKbs: () => api.get('/admin/kbs'),
+  listKbDocs: (kbId) => api.get(`/admin/kbs/${kbId}/documents`),
+  deleteKb: (kbId) => api.delete(`/admin/kbs/${kbId}`),
 }
 
-// Store 记忆
-export const storeAPI = {
-  list: (namespace) => api.get('/store', { params: { namespace } }),
-  get: (key, namespace = 'default') => api.get(`/store/${key}`, { params: { namespace } }),
-  put: (key, value, namespace = 'default') => api.put('/store', { key, value, namespace }),
-  delete: (key, namespace = 'default') => api.delete(`/store/${key}`, { params: { namespace } }),
-  clear: (namespace) => api.delete('/store', { params: { namespace } }),
+// 评估
+export const evalAPI = {
+  getModels: () => api.get('/eval/models'),
+  // 数据集
+  createDataset: (data) => api.post('/eval/datasets', data),
+  listDatasets: () => api.get('/eval/datasets'),
+  getDataset: (id) => api.get(`/eval/datasets/${id}`),
+  deleteDataset: (id) => api.delete(`/eval/datasets/${id}`),
+  // Run
+  createRun: (data) => api.post('/eval/runs', data),
+  listRuns: () => api.get('/eval/runs'),
+  getRun: (id) => api.get(`/eval/runs/${id}`),
+  getProgress: (id) => api.get(`/eval/runs/${id}/progress`),
+  getResults: (id) => api.get(`/eval/runs/${id}/results`),
+  stopRun: (id) => api.post(`/eval/runs/${id}/stop`),
+  resumeRun: (id) => api.post(`/eval/runs/${id}/resume`),
+  deleteRun: (id) => api.delete(`/eval/runs/${id}`),
 }

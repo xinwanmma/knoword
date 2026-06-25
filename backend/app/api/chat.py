@@ -1,23 +1,30 @@
-"""RAG 对话路由 — LangGraph + 真实流式 SSE。"""
+"""RAG 对话路由 — LangChain LCEL 风格 + 真实流式 SSE。
 
-import json
-import uuid
+设计要点：
+- 权限安全：对话前校验用户对请求中 KB 的所有权
+- 独立 session：SSE 流式响应全程在 event_stream 内部创建/释放 session，
+  避免 Depends(get_db) 注入的 session 在长流式期间被长期持有（连接池耗尽）
+- 真实流式：llm.astream() 逐 token 输出
+- 无 LangGraph：直接调用 retrieval_pipeline.prepare_sources()
+"""
+
 import asyncio
+import json
 import logging
+import uuid
 from typing import Set
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
-from app.db.database import get_db
-from app.models.models import User, KnowledgeBase, Conversation, Message
-from app.schemas.schemas import ChatRequest, ConversationOut, MessageOut
 from app.core.security import get_current_user
-from app.services.agent_graph import get_compiled_graph
+from app.db.database import async_session_factory, get_db
+from app.models.models import Conversation, KnowledgeBase, Message, User
+from app.schemas.schemas import ChatRequest, ConversationOut, MessageOut
+from app.services.retrieval_pipeline import prepare_sources
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +34,39 @@ router = APIRouter(prefix="/chat", tags=["对话"])
 _background_tasks: Set[asyncio.Task] = set()
 
 
+# ==================== 辅助函数 ====================
+
 def _sse_event(event: str, data) -> str:
     """构造 SSE 事件字符串。"""
     if isinstance(data, (dict, list)):
         data = json.dumps(data, ensure_ascii=False)
     return f"event: {event}\ndata: {data}\n\n"
+
+
+def _format_sources_text(sources: list[dict]) -> str:
+    """将检索结果格式化为 Prompt 文本。"""
+    if not sources:
+        return "(无相关参考资料)"
+
+    lines = []
+    for i, s in enumerate(sources):
+        score = round(s.get("score", 0), 4)
+        filename = s.get("filename", "未知文件")
+        page = s.get("page", "?")
+        content = s.get("content", "")
+        lines.append(f"[来源{i+1}] {filename} 第{page}页 (相关度: {score})\n{content}")
+    return "\n\n".join(lines)
+
+
+def _format_history(messages: list) -> str:
+    """格式化对话历史。"""
+    lines = []
+    for m in messages[-10:]:
+        if isinstance(m, HumanMessage):
+            lines.append(f"用户: {m.content[:200]}")
+        elif isinstance(m, AIMessage):
+            lines.append(f"助手: {m.content[:200]}")
+    return "\n".join(lines)
 
 
 async def _load_conversation_history(
@@ -59,171 +94,157 @@ async def _load_conversation_history(
     return lc_messages
 
 
+async def _validate_kb_access(
+    kb_ids: list[int], user_id: uuid.UUID, db: AsyncSession
+) -> list[int]:
+    """校验用户对请求中 KB 集合的访问权限，返回有效 KB ID 列表。
+
+    Raises:
+        HTTPException: 当用户请求访问不属于自己的 KB 时
+    """
+    if not kb_ids:
+        return []
+
+    result = await db.execute(
+        select(KnowledgeBase.id).where(
+            KnowledgeBase.id.in_(kb_ids),
+            KnowledgeBase.owner_id == user_id,
+        )
+    )
+    valid_ids = {row[0] for row in result.all()}
+    invalid = set(kb_ids) - valid_ids
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"无权访问知识库: {sorted(invalid)}",
+        )
+    return list(valid_ids)
+
+
+# ==================== 路由 ====================
+
 @router.post("")
 async def chat(
     req: ChatRequest,
-    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """发送消息并获取流式回答（LangGraph + 真实流式）。
+    """发送消息并获取流式回答。
 
     流程：
-    1. prepare 阶段（非流式）：Store 加载 + 缓存检查 + 路由 + 检索
-    2. generate 阶段（真流式）：llm.astream 逐 token 输出
-    3. postprocess 阶段：缓存保存 + 自动提取记忆
+    1. 校验 KB 权限（前置失败立即返回 403）
+    2. 准备阶段（非流式）：向量检索 → Rerank
+    3. 生成阶段（真流式）：llm.astream 逐 token 输出
+    4. 保存：用户消息 + AI 回答入库
 
     SSE 事件：
-    - agent:    当前 Agent 名称
-    - sources:  RAG 引用来源
-    - token:    逐 token 真实流式
-    - cache:    缓存命中标记
-    - done:     完成
-    - error:    错误
+    - status:  状态更新
+    - sources: 检索引用来源
+    - token:   逐 token 真实流式
+    - done:    完成（含 conversation_id）
+    - error:   错误
     """
 
     async def event_stream():
-        conversation_id = req.conversation_id
         full_answer = ""
-        sources_data = []
+        sources_data: list[dict] = []
+        conversation_id = req.conversation_id
 
-        try:
-            # 1. 加载对话历史
-            history_messages = []
-            if conversation_id:
-                history_messages = await _load_conversation_history(conversation_id, db)
+        # 整个 SSE 生命周期使用独立 session，避免占用 Depends 注入的会话
+        async with async_session_factory() as db:
+            try:
+                # 1. 校验 KB 权限
+                if req.kb_ids and not req.search_all:
+                    await _validate_kb_access(req.kb_ids, current_user.id, db)
+                elif req.search_all:
+                    # 搜索全部时，查找当前用户的所有 KB
+                    result = await db.execute(
+                        select(KnowledgeBase.id).where(
+                            KnowledgeBase.owner_id == current_user.id
+                        )
+                    )
+                    req.kb_ids = [row[0] for row in result.all()]
 
-            current_message = HumanMessage(content=req.query)
-            all_messages = history_messages + [current_message]
+                # 2. 加载对话历史
+                history_messages = []
+                if conversation_id:
+                    history_messages = await _load_conversation_history(conversation_id, db)
 
-            # 2. 构建初始状态
-            initial_state = {
-                "messages": all_messages,
-                "user_id": str(current_user.id),
-                "user_name": current_user.username,
-                "kb_ids": req.kb_ids or [],
-                "search_all": req.search_all,
-                "store_data": {},
-                "agent_answer": "",
-                "sources": [],
-                "agent_name": "",
-                "original_query": req.query,
-                "from_cache": False,
-            }
+                current_message = HumanMessage(content=req.query)
+                all_messages = history_messages + [current_message]
 
-            # 3. 运行 prepare 阶段（发出进度事件）
-            yield _sse_event("status", {"message": "正在分析意图..."})
+                # 3. 检索（直接调用 retrieval_pipeline，替代 LangGraph）
+                yield _sse_event("status", {"message": "正在检索相关资料..."})
 
-            graph = get_compiled_graph()
-            thread_id = str(current_user.id)
-            config = {"configurable": {"thread_id": thread_id}}
+                sources_data = await prepare_sources(
+                    query=req.query,
+                    kb_ids=req.kb_ids or [],
+                    search_all=req.search_all,
+                    top_k=5,
+                )
 
-            prepare_result = None
-            async for event in graph.astream(initial_state, config, stream_mode="updates"):
-                for node_name, node_output in event.items():
-                    if node_name == "prepare":
-                        prepare_result = node_output
-
-            if prepare_result is None:
-                yield _sse_event("error", {"message": "准备阶段失败"})
-                return
-
-            agent_name = prepare_result.get("agent_name", "general")
-            from_cache = prepare_result.get("from_cache", False)
-            sources_data = prepare_result.get("sources", [])
-
-            # 4. 发送 agent 事件
-            yield _sse_event("agent", {"name": agent_name})
-
-            # 5. 缓存命中 → 直接返回答案
-            if from_cache:
-                full_answer = prepare_result.get("agent_answer", "")
-                yield _sse_event("cache", {"hit": True})
-                for char in full_answer:
-                    yield _sse_event("token", char)
-                    await asyncio.sleep(0)
-            else:
-                # 6. 真流式生成：用 llm.astream 逐 token 输出
                 if sources_data:
                     yield _sse_event("sources", sources_data)
 
-                # 直接调用 llm.astream 实现真流式
-                agent_name = prepare_result.get("agent_name", "general")
-                store_data = prepare_result.get("store_data", {})
-                query = req.query
-
-                from app.services.agent_graph import (
-                    _format_store_text, _format_sources_text, _format_history,
-                    _build_rag_prompt, _build_general_prompt,
-                )
-
-                store_text = _format_store_text(store_data)
+                # 4. 构建 prompt
+                sources_text = _format_sources_text(sources_data)
                 history_text = _format_history(all_messages)
 
-                if agent_name == "rag" and sources_data:
-                    src_text = _format_sources_text({
-                        "documents": [s.get("content", "") for s in sources_data],
-                        "metadatas": [{"filename": s.get("filename", ""), "page": s.get("page", "?")} for s in sources_data],
-                        "distances": [1.0 - s.get("score", 0) for s in sources_data],
-                    })
-                    prompt_messages = _build_rag_prompt(query, store_text, src_text, history_text)
-                else:
-                    prompt_messages = _build_general_prompt(query, store_text, history_text, current_user.username)
+                history_block = f"\n\n历史对话：\n{history_text}" if history_text else ""
+                sources_block = f"\n\n参考资料：\n{sources_text}" if sources_data else ""
 
+                system_prompt = f"""你是一个知识库问答助手。请根据以下参考资料回答用户问题。
+如果资料中没有相关信息，请如实说明，不要编造。
+请用中文回答，保持准确、简洁、有条理。{sources_block}{history_block}
+
+用户问题：{req.query}"""
+
+                # 5. 流式生成
                 from app.core.llm import get_llm
-                llm = get_llm()
 
-                async for chunk in llm.astream(prompt_messages):
+                yield _sse_event("status", {"message": "正在生成回答..."})
+
+                llm = get_llm()
+                async for chunk in llm.astream([HumanMessage(content=system_prompt)]):
                     if chunk.content:
                         full_answer += chunk.content
                         yield _sse_event("token", chunk.content)
                         await asyncio.sleep(0)
 
-                # 7. 异步后处理（缓存 + 自动记忆）
-                task = asyncio.create_task(_postprocess(
-                    str(current_user.id), req.query, full_answer
-                ))
-                _background_tasks.add(task)
-                task.add_done_callback(_background_tasks.discard)
-
-            # 8. 保存对话到数据库
-            from app.db.database import async_session_factory
-            async with async_session_factory() as write_db:
+                # 6. 保存到数据库（使用同一 session 减少连接浪费）
                 if not conversation_id:
                     conv = Conversation(
                         id=uuid.uuid4(),
                         user_id=current_user.id,
-                        title=req.query[:20],
+                        title=req.query[:20] or "新对话",
                         kb_ids=req.kb_ids if not req.search_all else [],
                     )
-                    write_db.add(conv)
-                    await write_db.flush()
+                    db.add(conv)
+                    await db.flush()
                     conversation_id = str(conv.id)
 
-                user_msg = Message(
+                db.add(Message(
                     id=uuid.uuid4(),
                     conversation_id=uuid.UUID(conversation_id),
                     role="user",
                     content=req.query,
-                )
-                write_db.add(user_msg)
-
-                assistant_msg = Message(
+                ))
+                db.add(Message(
                     id=uuid.uuid4(),
                     conversation_id=uuid.UUID(conversation_id),
                     role="assistant",
                     content=full_answer,
                     sources=sources_data if sources_data else None,
-                    agent=agent_name,
-                )
-                write_db.add(assistant_msg)
-                await write_db.commit()
+                ))
+                await db.commit()
 
-            # 9. done
-            yield _sse_event("done", {"conversation_id": conversation_id})
+                yield _sse_event("done", {"conversation_id": conversation_id})
 
-        except Exception as e:
-            logger.error(f"对话处理失败: {e}", exc_info=True)
-            yield _sse_event("error", {"message": str(e)})
+            except HTTPException as he:
+                yield _sse_event("error", {"message": he.detail})
+            except Exception as e:
+                logger.error(f"对话处理失败: {e}", exc_info=True)
+                yield _sse_event("error", {"message": str(e)})
+                await db.rollback()
 
     return StreamingResponse(
         event_stream(),
@@ -236,15 +257,7 @@ async def chat(
     )
 
 
-async def _postprocess(user_id: str, query: str, answer: str):
-    """后处理：缓存 + 自动记忆（异步不阻塞响应）。"""
-    try:
-        from app.services.agent_graph import _save_to_cache, _auto_extract_and_save
-        await _save_to_cache(user_id, query, answer)
-        await _auto_extract_and_save(user_id, query, answer)
-    except Exception as e:
-        logger.error(f"Postprocess failed: {e}")
-
+# ==================== 对话历史接口 ====================
 
 @router.get("/history", response_model=list[ConversationOut])
 async def list_conversations(

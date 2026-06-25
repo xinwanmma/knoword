@@ -14,7 +14,6 @@ if config.config_file_name is not None:
 # 导入所有模型以注册到 metadata
 from app.db.database import Base
 from app.models.models import *  # noqa
-from app.services.store_service import UserStore  # noqa
 
 # 从 .env 读取数据库 URL（覆盖 alembic.ini 中的硬编码值）
 import os

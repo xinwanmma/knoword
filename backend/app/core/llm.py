@@ -1,23 +1,25 @@
-"""LangChain LLM 兼容层 — 用 ChatOllama 封装本地 Ollama 模型。"""
+"""LLM 客户端 — 委托给 services.llm_provider.factory。
 
-from langchain_ollama import ChatOllama
-from app.config import settings
+保留此文件作为兼容入口，新代码请直接使用：
+    from app.services.llm_provider import get_llm_provider
+    llm = get_llm_provider("mimo-2.5")
+"""
+import logging
 
-_llm_cache: dict[str, ChatOllama] = {}
+from app.services.llm_provider.factory import get_llm_provider
 
-
-def get_llm(model: str | None = None, temperature: float = 0.7) -> ChatOllama:
-    """获取 LangChain ChatOllama 实例（带缓存）。"""
-    key = f"{model or settings.OLLAMA_LLM_MODEL}_{temperature}"
-    if key not in _llm_cache:
-        _llm_cache[key] = ChatOllama(
-            base_url=settings.OLLAMA_BASE_URL,
-            model=model or settings.OLLAMA_LLM_MODEL,
-            temperature=temperature,
-        )
-    return _llm_cache[key]
+logger = logging.getLogger(__name__)
 
 
-def get_llm_for_supervisor() -> ChatOllama:
-    """Supervisor 路由用的 LLM（低温度）。"""
+def get_llm(model: str | None = None, temperature: float | None = None):
+    """获取 LLM 实例（向后兼容入口）。
+
+    内部委托给 LLM Factory。
+    """
+    provider = get_llm_provider(model)
+    return provider.get_chat_model(temperature=temperature)
+
+
+def get_llm_for_supervisor():
+    """低温度版本（用于路由判断等需要确定性的场景）。"""
     return get_llm(temperature=0.1)

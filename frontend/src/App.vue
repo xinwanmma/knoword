@@ -23,13 +23,13 @@
             <el-icon><Folder /></el-icon>
             <span>知识库</span>
           </el-menu-item>
-          <el-menu-item v-if="userStore.isAdmin" index="/admin">
+          <el-menu-item v-if="userStore.user?.is_admin" index="/admin">
             <el-icon><Setting /></el-icon>
-            <span>管理</span>
+            <span>管理后台</span>
           </el-menu-item>
-          <el-menu-item index="/status">
-            <el-icon><Monitor /></el-icon>
-            <span>系统状态</span>
+          <el-menu-item v-if="userStore.user?.is_admin" index="/evaluation">
+            <el-icon><DataLine /></el-icon>
+            <span>评估中心</span>
           </el-menu-item>
         </el-menu>
         <div class="user-info">
@@ -37,7 +37,6 @@
             <span class="user-name">
               <el-icon><User /></el-icon>
               {{ userStore.user?.username }}
-              <el-tag v-if="userStore.isAdmin" size="small" type="warning">管理员</el-tag>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
@@ -63,6 +62,9 @@
 import { onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from './stores/user'
+import {
+  ChatDotRound, ChatLineRound, Folder, Setting, User, DataLine,
+} from '@element-plus/icons-vue'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 
 const route = useRoute()

@@ -22,10 +22,12 @@ def _make_vector_id(kb_id: int, doc_id: int, chunk_index: int) -> str:
 
 
 async def process_document(doc_id: int, file_path: str):
-    """异步处理单个文档：解析 → 分块 → 向量化 → 写入 ChromaDB。"""
+    """异步处理单个文档：解析 → 分块 → 向量化 → 写入 ChromaDB。
+
+    使用独立 session，状态修改后立即 commit，确保前端可实时查询状态。
+    """
     from app.db.database import async_session_factory
 
-    doc = None
     async with async_session_factory() as db:
         try:
             # 获取文档记录
@@ -35,7 +37,9 @@ async def process_document(doc_id: int, file_path: str):
                 logger.error(f"文档不存在: doc_id={doc_id}")
                 return
 
+            # 标记为处理中
             doc.status = "processing"
+            doc.error = None
             await db.commit()
 
             # 步骤 1：解析文档
@@ -91,18 +95,22 @@ async def process_document(doc_id: int, file_path: str):
             # 更新文档状态
             doc.status = "ready"
             doc.chunk_count = len(chunks)
+            doc.error = None
             await db.commit()
             logger.info(f"[doc_{doc_id}] 处理完成: {len(chunks)} 个 chunk 已向量化")
 
         except Exception as e:
             logger.error(f"[doc_{doc_id}] 处理失败: {e}", exc_info=True)
-            if doc is not None:
-                try:
+            try:
+                # 重新查询并更新状态（避免使用过期对象）
+                result = await db.execute(select(Document).where(Document.id == doc_id))
+                doc = result.scalar_one_or_none()
+                if doc is not None:
                     doc.status = "failed"
                     doc.error = str(e)[:1000]
                     await db.commit()
-                except Exception:
-                    pass
+            except Exception as inner_e:
+                logger.error(f"[doc_{doc_id}] 标记失败状态时出错: {inner_e}")
 
 
 async def remove_document_vectors(doc_id: int):

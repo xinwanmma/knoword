@@ -42,26 +42,45 @@ class Token(BaseModel):
 class KnowledgeBaseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
-    category_id: Optional[int] = None
-    is_global: bool = False
+    # 策略配置（Phase 3）
+    embedding_model: str = "qwen3-embedding:0.6b"
+    chunking_strategy: str = "recursive"
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+    retrieval_strategy: str = "vector"
+    rerank_model: str = "BAAI/bge-reranker-base"
+    rerank_top_n: int = 20
 
 
 class KnowledgeBaseUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     description: Optional[str] = None
-    category_id: Optional[int] = None
+    # 策略更新
+    embedding_model: Optional[str] = None
+    chunking_strategy: Optional[str] = None
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
+    retrieval_strategy: Optional[str] = None
+    rerank_model: Optional[str] = None
+    rerank_top_n: Optional[int] = None
 
 
 class KnowledgeBaseOut(BaseModel):
     id: int
     name: str
     description: Optional[str]
-    category_id: Optional[int]
-    category_name: Optional[str] = None
-    owner_id: Optional[uuid.UUID]
-    is_global: bool
+    owner_id: uuid.UUID
     created_at: datetime
     document_count: int = 0
+    # 策略
+    embedding_model: str = "qwen3-embedding:0.6b"
+    chunking_strategy: str = "recursive"
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+    retrieval_strategy: str = "vector"
+    rerank_model: str = "BAAI/bge-reranker-base"
+    rerank_top_n: int = 20
+    graphrag_indexed: bool = False
 
     class Config:
         from_attributes = True
@@ -88,20 +107,6 @@ class DocumentStatusOut(BaseModel):
     status: str
     chunk_count: int
     error: Optional[str]
-
-
-# ==================== 分类 ====================
-
-class CategoryCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=100)
-
-
-class CategoryOut(BaseModel):
-    id: int
-    name: str
-
-    class Config:
-        from_attributes = True
 
 
 # ==================== 对话 ====================
@@ -148,7 +153,6 @@ class MessageOut(BaseModel):
     role: str
     content: str
     sources: Optional[list[dict]] = None
-    agent: Optional[str] = None
     created_at: datetime
 
     class Config:

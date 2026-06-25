@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useUserStore } from '../stores/user'
+import { ElMessage } from 'element-plus'
 
 const routes = [
   {
@@ -30,13 +31,13 @@ const routes = [
     path: '/admin',
     name: 'Admin',
     component: () => import('../views/AdminView.vue'),
-    meta: { requiresAuth: true, admin: true },
+    meta: { requiresAuth: true, requiresAdmin: true },
   },
   {
-    path: '/status',
-    name: 'Status',
-    component: () => import('../views/StatusView.vue'),
-    meta: { requiresAuth: true },
+    path: '/evaluation',
+    name: 'Evaluation',
+    component: () => import('../views/EvaluationView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
   },
 ]
 
@@ -48,16 +49,16 @@ const router = createRouter({
 router.beforeEach(async (to, from, next) => {
   const userStore = useUserStore()
 
-  // 如果有 token 但 user 还没加载，先 fetchUser
   if (userStore.isLoggedIn && !userStore.user) {
     await userStore.fetchUser()
   }
 
   if (to.meta.requiresAuth && !userStore.isLoggedIn) {
     next('/login')
-  } else if (to.meta.guest && userStore.isLoggedIn) {
+  } else if (to.meta.requiresAdmin && !userStore.user?.is_admin) {
     next('/')
-  } else if (to.meta.admin && !userStore.isAdmin) {
+    ElMessage.error('需要管理员权限')
+  } else if (to.meta.guest && userStore.isLoggedIn) {
     next('/')
   } else {
     next()

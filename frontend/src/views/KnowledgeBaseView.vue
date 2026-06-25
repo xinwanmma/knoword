@@ -2,20 +2,15 @@
   <div class="kb-page">
     <div class="page-header">
       <h2>知识库管理</h2>
-      <div class="header-actions">
-        <el-select v-model="filterCategory" placeholder="按分类筛选" clearable size="default" style="width: 150px">
-          <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id" />
-        </el-select>
-        <el-button type="primary" @click="showCreateDialog">
-          <el-icon><Plus /></el-icon> 创建知识库
-        </el-button>
-      </div>
+      <el-button type="primary" @click="showCreateDialog">
+        <el-icon><Plus /></el-icon> 创建知识库
+      </el-button>
     </div>
 
     <!-- 知识库列表 -->
     <div class="kb-grid">
       <el-card
-        v-for="kb in filteredKbs"
+        v-for="kb in knowledgeBases"
         :key="kb.id"
         class="kb-card"
         shadow="hover"
@@ -23,8 +18,7 @@
         <template #header>
           <div class="kb-card-header">
             <div class="kb-title">
-              <el-icon v-if="kb.is_global" color="#e6a23c"><Star /></el-icon>
-              <el-icon v-else color="#909399"><Folder /></el-icon>
+              <el-icon color="#909399"><Folder /></el-icon>
               <span>{{ kb.name }}</span>
             </div>
             <div class="kb-actions">
@@ -41,15 +35,12 @@
           </div>
         </template>
         <div class="kb-meta">
-          <el-tag v-if="kb.category_name" size="small" type="info">{{ kb.category_name }}</el-tag>
-          <el-tag v-if="kb.is_global" size="small" type="warning">全局</el-tag>
-          <el-tag v-else size="small">个人</el-tag>
           <span class="doc-count">{{ kb.document_count }} 个文档</span>
         </div>
         <p class="kb-desc">{{ kb.description || '暂无描述' }}</p>
       </el-card>
 
-      <div v-if="filteredKbs.length === 0" class="empty-state">
+      <div v-if="knowledgeBases.length === 0" class="empty-state">
         <el-empty description="暂无知识库">
           <el-button type="primary" @click="showCreateDialog">创建第一个知识库</el-button>
         </el-empty>
@@ -68,17 +59,6 @@
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="kbForm.description" type="textarea" :rows="3" placeholder="可选描述" />
-        </el-form-item>
-        <el-form-item label="分类">
-          <el-select v-model="kbForm.category_id" placeholder="选择分类" clearable style="width: 100%">
-            <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="!editingKb" label="可见性">
-          <el-radio-group v-model="kbForm.is_global">
-            <el-radio :value="false">个人</el-radio>
-            <el-radio :value="true" :disabled="!userStore.isAdmin">全局（仅管理员）</el-radio>
-          </el-radio-group>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -152,17 +132,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, reactive } from 'vue'
-import { kbAPI, docAPI, categoryAPI } from '../api'
-import { useUserStore } from '../stores/user'
-import { Plus, Edit, Delete, Document, Folder, Star, UploadFilled, Refresh } from '@element-plus/icons-vue'
+import { ref, onMounted, reactive } from 'vue'
+import { kbAPI, docAPI } from '../api'
+import { Plus, Edit, Delete, Document, Folder, UploadFilled, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-const userStore = useUserStore()
-
 const knowledgeBases = ref([])
-const categories = ref([])
-const filterCategory = ref(null)
 const kbDialogVisible = ref(false)
 const docDialogVisible = ref(false)
 const editingKb = ref(null)
@@ -175,18 +150,10 @@ const uploading = ref(false)
 const kbForm = reactive({
   name: '',
   description: '',
-  category_id: null,
-  is_global: false,
-})
-
-const filteredKbs = computed(() => {
-  if (!filterCategory.value) return knowledgeBases.value
-  return knowledgeBases.value.filter((kb) => kb.category_id === filterCategory.value)
 })
 
 onMounted(() => {
   loadKbs()
-  loadCategories()
 })
 
 async function loadKbs() {
@@ -196,19 +163,10 @@ async function loadKbs() {
   } catch (err) { console.error(err) }
 }
 
-async function loadCategories() {
-  try {
-    const { data } = await categoryAPI.list()
-    categories.value = data
-  } catch (err) { console.error(err) }
-}
-
 function showCreateDialog() {
   editingKb.value = null
   kbForm.name = ''
   kbForm.description = ''
-  kbForm.category_id = null
-  kbForm.is_global = false
   kbDialogVisible.value = true
 }
 
@@ -216,8 +174,6 @@ function editKb(kb) {
   editingKb.value = kb
   kbForm.name = kb.name
   kbForm.description = kb.description || ''
-  kbForm.category_id = kb.category_id
-  kbForm.is_global = kb.is_global
   kbDialogVisible.value = true
 }
 
@@ -232,15 +188,12 @@ async function saveKb() {
       await kbAPI.update(editingKb.value.id, {
         name: kbForm.name,
         description: kbForm.description,
-        category_id: kbForm.category_id,
       })
       ElMessage.success('更新成功')
     } else {
       await kbAPI.create({
         name: kbForm.name,
         description: kbForm.description,
-        category_id: kbForm.category_id,
-        is_global: kbForm.is_global,
       })
       ElMessage.success('创建成功')
     }
@@ -331,11 +284,6 @@ async function reindexDoc(doc) {
 
 .page-header h2 {
   color: #303133;
-}
-
-.header-actions {
-  display: flex;
-  gap: 12px;
 }
 
 .kb-grid {

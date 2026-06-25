@@ -26,10 +26,21 @@ python-jose[cryptography]>=3.3.0
 bcrypt>=4.0.0
 pydantic[email]>=2.7.0
 
-# --- LangChain + LangGraph ---
-langgraph>=0.2.0
+# --- LangChain (无 LangGraph) ---
 langchain-core>=0.3.0
-langchain-ollama>=0.2.0
+langchain-openai>=0.1.0    # MiMo/DeepSeek/GLM (OpenAI 兼容)
+langchain-ollama>=0.2.0     # OllamaEmbeddings (本地 embedding)
+langchain-experimental>=0.3.0  # SemanticChunker
+langchain-text-splitters>=0.3.0  # RecursiveCharacterTextSplitter
+
+# --- 本地模型（HF 离线加载 + BM25） ---
+sentence-transformers>=2.7.0   # HF embedding + rerank (CrossEncoder)
+rank_bm25>=0.2.2               # BM25 检索
+jieba>=0.42.1                  # 中文分词（BM25）
+
+# --- 评估 (RAGAS) ---
+ragas>=0.1.0                   # RAG 评估框架
+datasets>=2.20.0               # RAGAS 依赖
 
 # --- 记忆系统 ---
 # Store: PostgreSQL JSONB (不需要额外依赖)

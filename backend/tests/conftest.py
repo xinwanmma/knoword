@@ -7,8 +7,6 @@ import sys
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test.db"
 os.environ["DATABASE_URL_SYNC"] = "sqlite:///./test.db"
 os.environ["CHROMADB_PATH"] = "./test_chromadb"
-os.environ["MEM0_ENABLED"] = "false"
-os.environ["STORE_ENABLED"] = "true"
 os.environ["ADMIN_USERNAME"] = "testadmin"
 os.environ["ADMIN_PASSWORD"] = "testpass123"
 os.environ["ADMIN_EMAIL"] = "test@test.com"

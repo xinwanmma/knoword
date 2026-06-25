@@ -66,12 +66,6 @@
 
           <!-- AI 回答 -->
           <div v-else class="assistant-block">
-            <!-- Agent 标签 -->
-            <div class="agent-label">
-              <span v-if="msg.fromCache" class="agent-tag agent-cache">⚡ 缓存命中</span>
-              <span v-else-if="msg.agent === 'rag'" class="agent-tag agent-rag">🟢 RAG 助手</span>
-              <span v-else class="agent-tag agent-general">🔵 通用助手</span>
-            </div>
             <!-- 引用来源 -->
             <div v-if="msg.sources && msg.sources.length > 0" class="sources-section">
               <div class="sources-title">
@@ -106,16 +100,9 @@
 
         <!-- 正在生成的流式回答 -->
         <div v-if="streaming" class="assistant-block">
-          <!-- 进度状态（生成开始前显示） -->
           <div v-if="!streamText && streamStatus" class="status-indicator">
             <span class="status-dot"></span>
             {{ streamStatus }}
-          </div>
-          <!-- Agent 标签 -->
-          <div v-if="streamAgent || streamFromCache" class="agent-label">
-            <span v-if="streamFromCache" class="agent-tag agent-cache">⚡ 缓存命中</span>
-            <span v-else-if="streamAgent === 'rag'" class="agent-tag agent-rag">🟢 RAG 助手</span>
-            <span v-else class="agent-tag agent-general">🔵 通用助手</span>
           </div>
           <div v-if="streamSources.length > 0" class="sources-section">
             <div class="sources-title">
@@ -137,10 +124,6 @@
 
       <!-- 输入区 -->
       <div class="input-area">
-        <el-button text @click="showMemoryPanel = true">
-          <el-icon size="18"><DataLine /></el-icon>
-          <span style="margin-left: 4px; font-size: 12px">记忆</span>
-        </el-button>
         <el-input
           v-model="inputText"
           type="textarea"
@@ -160,20 +143,16 @@
       </div>
     </div>
   </div>
-
-  <!-- 记忆面板 -->
-  <MemoryPanel :visible="showMemoryPanel" @close="showMemoryPanel = false" />
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { chatAPI, kbAPI } from '../api'
 import { useUserStore } from '../stores/user'
-import { Plus, ChatLineRound, Delete, Document, Promotion, DataLine } from '@element-plus/icons-vue'
+import { Plus, ChatLineRound, Delete, Document, Promotion } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { ElMessage } from 'element-plus'
-import MemoryPanel from '../components/MemoryPanel.vue'
 
 const userStore = useUserStore()
 
@@ -185,16 +164,26 @@ const inputText = ref('')
 const streaming = ref(false)
 const streamText = ref('')
 const streamSources = ref([])
-const streamAgent = ref('')
-const streamFromCache = ref(false)
 const streamStatus = ref('')
 const searchMode = ref('selected')
 const selectedKbIds = ref([])
 const knowledgeBases = ref([])
 const expandedSources = reactive({})
 const messagesContainer = ref()
-const showMemoryPanel = ref(false)
 let streamController = null
+
+// 修复 Bug #7：切换模式时重置 KB 选择
+watch(searchMode, (newMode) => {
+  if (newMode === 'all') {
+    selectedKbIds.value = []
+  }
+})
+
+function resetStreamState() {
+  streamText.value = ''
+  streamSources.value = []
+  streamStatus.value = ''
+}
 
 onUnmounted(() => {
   if (streamController) {
@@ -203,7 +192,6 @@ onUnmounted(() => {
 })
 
 onMounted(async () => {
-  // 等待用户信息加载完成后再请求
   await userStore.fetchUser().catch(() => {})
   if (userStore.isLoggedIn) {
     await Promise.all([loadConversations(), loadKnowledgeBases()])
@@ -226,10 +214,10 @@ async function loadConversations() {
 
 async function loadConversation(convId) {
   currentConvId.value = convId
+  resetStreamState()  // 修复 Bug #15：切换对话时清理流式状态
   try {
     const { data } = await chatAPI.getMessages(convId)
     messages.value = data
-    // 恢复该对话的知识库选择
     const conv = conversations.value.find(c => c.id === convId)
     if (conv && conv.kb_ids && conv.kb_ids.length > 0) {
       selectedKbIds.value = conv.kb_ids
@@ -243,6 +231,7 @@ function newChat() {
   currentConvId.value = null
   messages.value = []
   inputText.value = ''
+  resetStreamState()
 }
 
 async function deleteConversation(convId) {
@@ -260,18 +249,13 @@ function sendMessage() {
   const query = inputText.value.trim()
   if (!query || streaming.value) return
 
-  // 添加用户消息到界面
   messages.value.push({ role: 'user', content: query })
   inputText.value = ''
-  streamText.value = ''
-  streamSources.value = []
-  streamAgent.value = ''
-  streamFromCache.value = false
+  resetStreamState()  // 修复 Bug #6: 重置 status
   streamStatus.value = '正在思考...'
   streaming.value = true
   scrollToBottom()
 
-  // 构造请求
   const reqData = {
     query,
     search_all: searchMode.value === 'all',
@@ -279,20 +263,17 @@ function sendMessage() {
     conversation_id: currentConvId.value,
   }
 
-  // 启动 SSE 流
   streamController = chatAPI.stream(reqData, {
     onToken: (token) => {
       streamText.value += token
+      // 第一个 token 到达时清掉 status（进入流式输出阶段）
+      if (streamStatus.value) streamStatus.value = ''
       scrollToBottom()
     },
     onSources: (sources) => {
       streamSources.value = sources
-    },
-    onAgent: (data) => {
-      streamAgent.value = data.name
-    },
-    onCache: (data) => {
-      streamFromCache.value = data.hit
+      // 修复 Bug #6: sources 到达后清掉 status
+      streamStatus.value = ''
     },
     onStatus: (data) => {
       streamStatus.value = data.message
@@ -304,25 +285,15 @@ function sendMessage() {
         role: 'assistant',
         content: streamText.value,
         sources: streamSources.value.length > 0 ? [...streamSources.value] : null,
-        agent: streamAgent.value,
-        fromCache: streamFromCache.value,
       })
-      streamText.value = ''
-      streamSources.value = []
-      streamAgent.value = ''
-      streamFromCache.value = false
-      streamStatus.value = ''
+      resetStreamState()
       loadConversations()
       scrollToBottom()
     },
     onError: (msg) => {
       streaming.value = false
       ElMessage.error(msg)
-      streamText.value = ''
-      streamSources.value = []
-      streamAgent.value = ''
-      streamFromCache.value = false
-      streamStatus.value = ''
+      resetStreamState()
     },
   })
 }
@@ -341,7 +312,6 @@ function renderMarkdown(text) {
   }
 }
 
-// 预渲染消息的 HTML（避免每次 re-render 重复解析）
 const parsedMessages = computed(() => {
   return messages.value.map(msg => ({
     ...msg,
@@ -530,31 +500,6 @@ function scrollToBottom() {
   padding: 16px 20px;
   background: #fff;
   border-top: 1px solid #e4e7ed;
-}
-
-.agent-label {
-  margin-bottom: 4px;
-}
-
-.agent-tag {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-.agent-rag {
-  background: #f0f9eb;
-  color: #67c23a;
-}
-
-.agent-general {
-  background: #ecf5ff;
-  color: #409eff;
-}
-
-.agent-cache {
-  background: #fdf6ec;
-  color: #e6a23c;
 }
 
 .status-indicator {
