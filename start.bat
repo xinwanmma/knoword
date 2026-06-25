@@ -1,6 +1,5 @@
 @echo off
-chcp 65001 >nul
-setlocal
+setlocal EnableExtensions
 
 set "BACKEND_DIR=%~dp0backend"
 set "FRONTEND_DIR=%~dp0frontend"
@@ -11,33 +10,32 @@ echo   RAG Knowledge Base - Start
 echo ========================================
 echo.
 
-REM --- [1/5] 环境检查 ---
 echo [1/5] Checking environment...
 
-python --version >nul 2>&1
+where python >nul 2>&1
 if errorlevel 1 (
-    echo   [FAIL] Python not found
+    echo   [FAIL] Python not found in PATH
     pause
     exit /b 1
 )
-for /f "delims=" %%v in ('python --version 2^>^&1') do echo   [OK] %%v
+for /f "tokens=2" %%v in ('python --version 2^>^&1') do echo   [OK] Python %%v
 
-node --version >nul 2>&1
+where node >nul 2>&1
 if errorlevel 1 (
-    echo [WARN] Node.js not found - frontend will not start
+    echo   [WARN] Node.js not found - frontend will be skipped
     set "SKIP_FRONTEND=1"
 ) else (
-    for /f "delims=" %%v in ('node --version 2^>^&1') do echo   [OK] %%v
+    for /f "tokens=1" %%v in ('node --version 2^>^&1') do echo   [OK] Node.js %%v
 )
 
-ollama --version >nul 2>&1
+where ollama >nul 2>&1
 if errorlevel 1 (
     echo   [WARN] Ollama not found - local embedding will not work
 ) else (
-    echo   [OK] Ollama
+    echo   [OK] Ollama installed
 )
 
-REM 启动 Ollama（如果未运行）
+REM Try to start Ollama if not responding
 curl -s http://localhost:11434/api/tags >nul 2>&1
 if errorlevel 1 (
     if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" (
@@ -47,54 +45,45 @@ if errorlevel 1 (
     )
 )
 
-REM 检查 embedding 模型
+REM Pull embedding model if missing
 curl -s http://localhost:11434/api/tags 2>nul | findstr "qwen3-embedding" >nul
 if errorlevel 1 (
-    echo   [INFO] Pulling qwen3-embedding:0.6b ...
+    echo   [INFO] Pulling qwen3-embedding:0.6b (one-time)...
     ollama pull qwen3-embedding:0.6b
 )
 echo   [OK] Embedding model ready
 echo   [INFO] LLM: MiMo Cloud API (set MIMO_API_KEY in backend\.env)
 
-REM MiMo API Key 检查
-findstr /C:"MIMO_API_KEY=." "%BACKEND_DIR%\.env" >nul 2>&1
-if errorlevel 1 (
+REM Check .env file
+if not exist "%BACKEND_DIR%\.env" (
     echo.
-    echo   [WARN] backend\.env 未配置 MIMO_API_KEY
-    echo          复制 backend\.env.example 为 .env 后填入 API Key
+    echo   [WARN] backend\.env not found
+    echo          Please: cd backend ^&^& copy .env.example .env
+    echo          Then edit .env and set MIMO_API_KEY
     echo.
-)
-
-REM PostgreSQL 检查
-curl -s -o nul -w "%%{http_code}" http://localhost:5432 2>nul | findstr /v "200" >nul
-if errorlevel 1 (
-    echo   [WARN] PostgreSQL on port 5432 not responding
-    echo          请确保 PostgreSQL 已启动并创建 rag_user / rag_kb
 )
 
 echo.
 
-REM --- [2/5] 后端依赖 ---
 echo [2/5] Installing backend dependencies...
 cd /d "%BACKEND_DIR%"
 pip install -r requirements.txt --quiet 2>nul
 if errorlevel 1 (
-    echo   [WARN] pip install had warnings - check output above
+    echo   [WARN] pip install had warnings
 ) else (
-    echo   [OK] Backend ready
+    echo   [OK] Backend dependencies ready
 )
 echo.
 
-REM --- [3/5] 前端依赖 ---
 echo [3/5] Installing frontend dependencies...
 if defined SKIP_FRONTEND goto skip_frontend
 cd /d "%FRONTEND_DIR%"
 if not exist "node_modules" (
-    npm install --silent 2>nul
+    call npm install --silent 2>nul
     if errorlevel 1 (
         echo   [WARN] npm install had warnings
     ) else (
-        echo   [OK] Frontend ready
+        echo   [OK] Frontend dependencies ready
     )
 ) else (
     echo   [OK] node_modules already exists
@@ -102,18 +91,17 @@ if not exist "node_modules" (
 :skip_frontend
 echo.
 
-REM --- [4/5] 数据库迁移 ---
-echo [4/5] Database migration...
+echo [4/5] Running database migration...
 cd /d "%BACKEND_DIR%"
 alembic upgrade head 2>nul
 if errorlevel 1 (
-    echo   [WARN] alembic upgrade had warnings - check PostgreSQL connection
+    echo   [WARN] alembic upgrade failed - check PostgreSQL connection
+    echo          Make sure PostgreSQL is running and rag_user/rag_kb exists
 ) else (
-    echo   [OK] Database ready
+    echo   [OK] Database schema ready
 )
 echo.
 
-REM --- [5/5] 启动服务 ---
 echo [5/5] Starting services...
 echo.
 echo   Backend:  http://localhost:8000
@@ -130,6 +118,7 @@ if not defined SKIP_FRONTEND (
 
 echo ========================================
 echo   All services started!
+echo   Close the popup windows to stop them.
 echo ========================================
 echo.
 pause
