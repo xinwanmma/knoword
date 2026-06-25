@@ -8,6 +8,10 @@
 """
 from app.services.embedding.factory import (
     get_embedding_provider, list_available_models, clear_cache,
+    close_all_providers,
 )
 
-__all__ = ["get_embedding_provider", "list_available_models", "clear_cache"]
+__all__ = [
+    "get_embedding_provider", "list_available_models", "clear_cache",
+    "close_all_providers",
+]

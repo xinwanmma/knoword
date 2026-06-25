@@ -59,3 +59,19 @@ def clear_cache():
     """清空 provider 缓存（用于测试或多 provider 切换）。"""
     global _instance_cache
     _instance_cache = {}
+
+
+async def close_all_providers():
+    """关闭所有已缓存的 provider（应用退出时调用）。"""
+    for model_id, provider in list(_instance_cache.items()):
+        aclose = getattr(provider, "aclose", None)
+        if aclose is not None:
+            try:
+                result = aclose()
+                # 兼容同步和异步 aclose
+                if hasattr(result, "__await__"):
+                    await result
+                logger.info(f"✅ Embedding provider 已关闭: {model_id}")
+            except Exception as e:
+                logger.warning(f"⚠️  关闭 embedding provider 失败: {model_id} - {e}")
+    _instance_cache.clear()

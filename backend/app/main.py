@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.db.database import init_db
-from app.services.ollama_service import close_client
+from app.services.embedding import close_all_providers
 from app.middleware.logging import RequestLoggingMiddleware
 
 # 配置日志
@@ -85,7 +85,7 @@ async def lifespan(app: FastAPI):
         logger.warning("⚠️  JWT_SECRET_KEY 使用默认值！请在生产环境中修改！")
     yield
     logger.info("🔄 正在关闭...")
-    await close_client()
+    await close_all_providers()
     logger.info("✅ 已关闭")
 
 

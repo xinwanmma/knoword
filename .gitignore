@@ -25,6 +25,7 @@ backend/.env
 
 # --- 后端运行时数据 ---
 backend/data/
+backend/reports/
 backend/test.db
 backend/test_chromadb/
 backend/*.db
@@ -58,8 +59,3 @@ Thumbs.db
 # --- 日志 ---
 *.log
 logs/
-
-# --- Docker 数据卷 ---
-chroma_data/
-neo4j_data/
-postgres_data/
