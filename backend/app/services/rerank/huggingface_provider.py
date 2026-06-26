@@ -18,7 +18,9 @@ class HuggingFaceRerankProvider(RerankProvider):
         self._model_id = model_id or settings.HF_RERANK_MODEL
         self._hf_cache_dir = Path(settings.HF_CACHE_DIR)
         safe_id = self._model_id.replace("/", "--")
-        self._local_dir = self._hf_cache_dir / f"models--{safe_id}"
+        self._hub_dir = self._hf_cache_dir / f"models--{safe_id}"
+        # 实际传给 CrossEncoder 的是 snapshots/<hash>/ 目录（不是 hub 根）
+        self._local_dir = self._hub_dir  # 懒解析，_ensure_model 里会修正
 
         self._model = None  # CrossEncoder 实例（懒加载）
 
@@ -26,24 +28,52 @@ class HuggingFaceRerankProvider(RerankProvider):
     def model_name(self) -> str:
         return self._model_id
 
+    def _resolve_local_dir(self) -> Path:
+        """解析出真正的模型目录（snapshots/<hash>/），而不是 hub 根。
+
+        HF 缓存标准结构:
+          hub/models--org--name/
+            blobs/  refs/main  snapshots/<hash>/config.json + *.safetensors
+        CrossEncoder 需要 snapshots/<hash>/ 路径才能找到 config.json。
+        """
+        # 优先：读 refs/main 拿 hash
+        ref_file = self._hub_dir / "refs" / "main"
+        if ref_file.exists():
+            snapshot_hash = ref_file.read_text().strip()
+            snap = self._hub_dir / "snapshots" / snapshot_hash
+            if snap.exists() and (snap / "config.json").exists():
+                return snap
+        # 兜底：扫 snapshots/ 取第一个有 config.json 的
+        snapshots_dir = self._hub_dir / "snapshots"
+        if snapshots_dir.exists():
+            for d in snapshots_dir.iterdir():
+                if d.is_dir() and (d / "config.json").exists():
+                    return d
+        # 旧布局（直接是文件）—— 兜底返回 hub_dir
+        return self._hub_dir
+
     def _ensure_model(self):
         if self._model is not None:
             return self._model
 
         # 1. 本地不存在 → 下载
-        if not self._local_dir.exists():
+        if not self._hub_dir.exists():
             self._download_model()
 
-        # 2. 强制离线
+        # 2. 解析真正的 snapshot 目录
+        local_dir = self._resolve_local_dir()
+        self._local_dir = local_dir
+
+        # 3. 强制离线
         os.environ["HF_HOME"] = str(self._hf_cache_dir.parent)
         if settings.HF_OFFLINE:
             os.environ["TRANSFORMERS_OFFLINE"] = "1"
             os.environ["HF_HUB_OFFLINE"] = "1"
 
-        # 3. 加载 CrossEncoder
+        # 4. 加载 CrossEncoder
         from sentence_transformers import CrossEncoder
-        logger.info(f"从本地加载 rerank 模型: {self._local_dir}")
-        self._model = CrossEncoder(str(self._local_dir))
+        logger.info(f"从本地加载 rerank 模型: {local_dir}")
+        self._model = CrossEncoder(str(local_dir))
         return self._model
 
     def _download_model(self):
