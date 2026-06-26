@@ -237,7 +237,7 @@ const form = ref({
 const mimoLiteModel = ref(import.meta.env.VITE_MIMO_LITE_MODEL || 'mimo-lite')
 
 const concurrencyMarks = { 1: '1', 2: '2', 4: '4', 6: '6', 8: '8' }
-const retrievalOptions = ['vector', 'bm25', 'rerank', 'graph']
+const retrievalOptions = ['vector', 'bm25', 'rerank']
 
 // Dataset form
 const showCreateDataset = ref(false)

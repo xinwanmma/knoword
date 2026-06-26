@@ -74,8 +74,6 @@ class Settings:
     DEFAULT_EVAL_QA_COUNT: int = int(os.getenv("DEFAULT_EVAL_QA_COUNT", "20"))
     DEFAULT_EVAL_CONCURRENCY: int = int(os.getenv("DEFAULT_EVAL_CONCURRENCY", "4"))
     EVAL_REPORT_DIR: str = os.getenv("EVAL_REPORT_DIR", "./reports")
-    # RAGAS 评估开关（默认关，因其慢）
-    USE_RAGAS: bool = os.getenv("USE_RAGAS", "false").lower() == "true"
 
     # --- JWT ---
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "change-me-to-a-random-secret")

@@ -1,65 +1,141 @@
-# 📚 RAG 知识库系统
+# RAG 知识库系统
 
-模块化、可插拔的 RAG 知识库问答系统，支持多 LLM/Embedding/Retrieval/Rerank 策略，可视化对比与批量评估。
+一个基于 **LangChain + FastAPI + Vue3** 的 RAG 知识库系统，支持多知识库管理、智能对话、评估中心。
 
-> **架构演进**：从 LangGraph → LCEL；新增 Strategy + Factory 模式；新增模型评估中心（LLM-as-Judge + RAGAS）。
+## ✨ 核心特性
 
-## ✨ 核心功能
+- **多知识库管理**：每个 KB 独立配置 embedding / chunking / retrieval 策略
+- **策略可插拔**：5 类 Strategy + Factory（embedding / llm / rerank / retrieval / chunking）
+- **智能对话**：SSE 流式生成 + 多轮对话 + 参考资料溯源
+- **评估中心**：每次评估默认跑 **8 个指标**（5 检索 + 3 LLM），基于 LangChain
+- **Rerank 支持**：本地 HF CrossEncoder + 云端 SiliconFlow API
+- **管理后台**：用户管理、KB 配额、操作日志
 
-- **RAG 检索** — 向量 / BM25 / Rerank 策略可切换，中文优化分块
-- **真实流式** — `llm.astream()` 逐 token 输出，非模拟
-- **多轮对话** — 对话历史持久化，支持上下文继续提问
-- **多知识库** — 用户私有 KB，按 owner_id 隔离，支持选 KB / 全库检索
-- **多格式文档** — PDF、DOCX、TXT、MD、XLSX、PPTX、CSV、JSON、HTML
-- **多 LLM** — MiMo（默认）/ DeepSeek / GLM（OpenAI 兼容协议）
-- **多 Embedding** — Ollama / HuggingFace（本地离线） / SiliconFlow（云端）
-- **多 Rerank** — HuggingFace CrossEncoder（本地） / SiliconFlow Qwen3-Reranker-4B
-- **评估中心** — 一键对比不同模型/策略效果，含 RAGAS 6 维评估
+## 📊 评估指标（8 个，每次都跑）
 
-## 🛠 技术栈
+| 类型 | 指标 | 说明 |
+|------|------|------|
+| 检索 | **Recall@K** | 所有相关文档里，前 K 个找回了多少比例 |
+| 检索 | **Precision@K** | 前 K 个结果里，相关文档的比例 |
+| 检索 | **Hit@K** | 前 K 个里有没有至少一个相关文档 |
+| 检索 | **MRR** | 第一个正确答案的倒数排名 |
+| 检索 | **NDCG@K** | 考虑排序质量的综合指标 |
+| LLM | **Faithfulness / Groundedness** | 答案是否由 retrieved contexts 推出 |
+| LLM | **Answer Relevancy** | 答案是否直接回答了问题 |
+| LLM | **Answer Correctness** | 0.5×F1 + 0.5×embedding cos sim |
 
-| 组件 | 技术 |
-|------|------|
-| 后端 | FastAPI + SQLAlchemy (async) + Alembic |
-| LLM 编排 | **LangChain LCEL**（纯函数式 + 流式） |
-| LLM 协议 | OpenAI 兼容（MiMo / DeepSeek / GLM） |
-| Embedding | Ollama / HuggingFace（离线）/ SiliconFlow |
-| Rerank | HuggingFace CrossEncoder / SiliconFlow |
-| 向量库 | ChromaDB（本地持久化） |
-| 评估 | RAGAS（可选）+ LLM-as-Judge（mimo-v2.5） |
-| 前端 | Vue3 + Vite + Element Plus |
-| 认证 | JWT + bcrypt |
+> LLM 评估模型：固定 `settings.MIMO_LITE_MODEL`（可在 `.env` 改 `MIMO_LITE_MODEL`）
+
+## 🏗️ 技术栈
+
+**后端**
+- FastAPI + SQLAlchemy(async) + Alembic
+- LangChain 1.x（核心架构：ChatOpenAI + ChatPromptTemplate + RunnableParallel）
+- ChromaDB（本地持久化向量库）
+- rank_bm25（BM25 检索）
+
+**前端**
+- Vue 3 + Pinia + Vue Router
+- Element Plus
+- Vite
+
+**AI / ML**
+- MiMo LLM（小米，默认生成模型）
+- DeepSeek / GLM 智谱（可选）
+- Ollama（本地 embedding，推荐）
+- HuggingFace（本地 embedding + rerank）
+
+## 📁 项目结构
+
+```
+d:\HHHUBS\clone\knoword\
+├── README.md
+├── start.py                       # 一键启动（后端 + 前端）
+├── .gitignore
+│
+├── backend/
+│   ├── .env.example               # 环境变量模板
+│   ├── requirements.txt
+│   ├── alembic/                   # DB 迁移
+│   ├── app/
+│   │   ├── main.py                # FastAPI 入口
+│   │   ├── config.py              # Settings
+│   │   ├── api/                   # HTTP 路由
+│   │   │   ├── auth.py
+│   │   │   ├── chat.py
+│   │   │   ├── documents.py
+│   │   │   ├── knowledge_base.py
+│   │   │   ├── admin.py
+│   │   │   ├── eval.py
+│   │   │   └── health.py
+│   │   ├── core/security.py       # JWT 认证
+│   │   ├── db/database.py         # SQLAlchemy session
+│   │   ├── models/                # ORM 模型
+│   │   ├── schemas/               # Pydantic schemas
+│   │   └── services/
+│   │       ├── chunking/          # ★ Chunking Strategy + Factory
+│   │       ├── embedding/         # ★ Embedding Provider + Factory
+│   │       ├── llm_provider/      # ★ LLM Provider + Factory
+│   │       ├── rerank/            # ★ Rerank Provider + Factory
+│   │       ├── retrieval/         # ★ Retrieval Strategy + Factory
+│   │       ├── eval/              # ★ 评估系统
+│   │       ├── parser.py
+│   │       ├── document_processor.py
+│   │       ├── retrieval_pipeline.py
+│   │       └── vectorstore.py
+│   ├── data/                      # 运行时数据（gitignore）
+│   │   ├── uploads/
+│   │   └── chromadb/
+│   ├── reports/                   # 评估报告（gitignore）
+│   ├── tests/
+│   │   └── test_auth.py
+│   └── migrate_eval_data.py       # 一次性数据迁移脚本
+│
+└── frontend/
+    ├── package.json
+    ├── vite.config.js
+    ├── index.html
+    └── src/
+        ├── main.js
+        ├── App.vue
+        ├── api/index.js
+        ├── router/index.js
+        ├── stores/user.js
+        ├── styles/global.css
+        └── views/
+            ├── LoginView.vue
+            ├── RegisterView.vue
+            ├── ChatView.vue
+            ├── KnowledgeBaseView.vue
+            ├── AdminView.vue
+            └── EvaluationView.vue
+```
 
 ## 🚀 快速开始
 
-### 一键启动（Windows）
+### 1. 启动后端
 
 ```bash
-start.bat
-```
-
-### 手动启动
-
-#### 1. 准备依赖服务
-
-- **PostgreSQL**（端口 5432）：创建库和用户
-- **Ollama**（端口 11434）：本地 embedding 服务
-  ```bash
-  ollama pull qwen3-embedding:0.6b
-  ```
-- **MiMo API Key**：到 https://api.xiaomimimo.com/ 申请
-
-#### 2. 后端
-
-```bash
+# 准备环境
 cd backend
-cp .env.example .env       # 填入 MIMO_API_KEY
+python -m venv venv
+venv\Scripts\activate            # Windows
 pip install -r requirements.txt
+
+# 配置环境变量
+copy .env.example .env           # Windows
+# 编辑 .env 填入 MIMO_API_KEY、JWT_SECRET_KEY、HF_CACHE_DIR
+
+# 初始化数据库
 alembic upgrade head
-uvicorn app.main:app --reload --port 8000
+
+# 启动后端
+python start.py                  # 或 uvicorn app.main:app --reload
 ```
 
-#### 3. 前端
+后端默认运行在 `http://localhost:8000`，API 文档在 `http://localhost:8000/docs`。
+
+### 2. 启动前端
 
 ```bash
 cd frontend
@@ -67,163 +143,45 @@ npm install
 npm run dev
 ```
 
-### 访问
+前端默认运行在 `http://localhost:5173`。
 
-| 服务 | 地址 |
-|------|------|
-| 前端 | http://localhost:3000 |
-| API 文档 | http://localhost:8000/docs |
+### 3. 一键启动（项目根目录）
 
-### 默认管理员
-
-- 用户名：`admin`
-- 密码：`admin123456`（可在 `.env` 用 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 修改）
-
-## 📂 项目结构
-
-```
-backend/
-├── app/
-│   ├── api/                       # HTTP 路由
-│   │   ├── auth.py                # 认证
-│   │   ├── chat.py                # 流式对话
-│   │   ├── documents.py           # 文档管理
-│   │   ├── knowledge_base.py      # KB CRUD
-│   │   ├── admin.py               # 管理员后台
-│   │   ├── eval.py                # 评估 API
-│   │   └── health.py              # 健康检查
-│   ├── core/                      # 兼容层（安全/embedding/llm 入口）
-│   ├── db/                        # SQLAlchemy 异步引擎
-│   ├── middleware/                # 请求日志中间件
-│   ├── models/                    # ORM 模型（含 eval_models）
-│   ├── schemas/                   # Pydantic 模式
-│   └── services/
-│       ├── embedding/             # ★ Embedding 工厂（Ollama/HF/SiliconFlow）
-│       ├── llm_provider/          # ★ LLM 工厂（MiMo/DeepSeek/GLM）
-│       ├── chunking/              # ★ Chunking 工厂（fixed/recursive/semantic）
-│       ├── retrieval/             # ★ Retrieval 工厂（vector/bm25/rerank/graph）
-│       ├── rerank/                # ★ Rerank 工厂（HF CrossEncoder/SiliconFlow）
-│       ├── eval/                  # ★ 评估系统
-│       │   ├── judge.py           #   LLM-as-Judge（mimo-v2.5 固定）
-│       │   ├── metrics.py         #   检索指标（hit/mrr/ndcg）
-│       │   ├── dataset_builder.py #   自动生成 QA 数据集
-│       │   ├── runner.py          #   断点续传 runner
-│       │   ├── ragas_eval.py      #   RAGAS 6 维评估
-│       │   └── report.py          #   JSON/MD 报告
-│       ├── parser.py              # 9 格式文档解析
-│       ├── retrieval_pipeline.py  # LCEL 检索管道
-│       └── vectorstore.py         # ChromaDB 封装
-├── alembic/                       # 数据库迁移
-├── tests/
-└── requirements.txt
-
-frontend/
-├── src/
-│   ├── api/index.js               # 后端 API 封装
-│   ├── router/index.js            # 路由（requiresAdmin 守卫）
-│   ├── stores/user.js             # Pinia 用户状态
-│   ├── views/
-│   │   ├── ChatView.vue           # 对话
-│   │   ├── KnowledgeBaseView.vue  # KB 管理
-│   │   ├── EvaluationView.vue     # ★ 评估中心
-│   │   ├── AdminView.vue          # 管理员后台
-│   │   ├── LoginView.vue
-│   │   └── RegisterView.vue
-│   ├── App.vue
-│   └── main.js
-├── index.html
-└── package.json
-
-start.bat                  # 一键启动
-newplan.md                 # 项目计划文档
+```bash
+# 在 d:\HHHUBS\clone\knoword\ 目录下
+python start.py
 ```
 
-## 🏭 模块化架构（Strategy + Factory）
+## 🔑 必填环境变量
 
-每个能力点都有 `Provider` 抽象 + `Factory` 注册表 + 字符串 ID：
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `MIMO_API_KEY` | ✅ | 小米 MiMo LLM（默认生成模型）|
+| `JWT_SECRET_KEY` | ✅ | JWT 签名密钥（生产必改）|
+| `ADMIN_PASSWORD` | ✅ | 默认管理员密码（首次启动创建）|
+| `HF_CACHE_DIR` | ✅ | HF 模型本地缓存目录 |
+| `DEEPSEEK_API_KEY` | ❌ | DeepSeek（可选）|
+| `GLM_API_KEY` | ❌ | GLM 智谱（可选）|
+| `SILICONFLOW_API_KEY` | ❌ | SiliconFlow 云端 embedding/rerank（可选）|
 
-```python
-# Embedding
-from app.services.embedding import get_embedding_provider
-emb = get_embedding_provider("qwen3-embedding:0.6b")  # OllamaProvider
-emb = get_embedding_provider("shibing624/text2vec-base-chinese")  # HFProvider
-emb = get_embedding_provider("Qwen/Qwen3-Embedding-8B")  # SiliconFlowProvider
+完整配置见 `backend/.env.example`。
 
-# LLM
-from app.services.llm_provider import get_llm_provider
-llm = get_llm_provider("mimo-v2.5-pro")
-llm = get_llm_provider("deepseek-v4-flash")
-llm = get_llm_provider("GLM-4.5-flash")
+## 🧪 测试
 
-# Chunking
-from app.services.chunking import get_chunker
-chunker = get_chunker("recursive", chunk_size=500, chunk_overlap=50)
-chunker = get_chunker("semantic", embeddings=emb)
-chunks = chunker.split(text)
-
-# Rerank
-from app.services.rerank import get_rerank_provider
-rerank = get_rerank_provider("BAAI/bge-reranker-base")  # 本地
-rerank = get_rerank_provider("Qwen/Qwen3-Reranker-4B")   # 云端
+```bash
+cd backend
+pytest tests/test_auth.py -v
 ```
 
-每个 KB 在数据库中保存策略选择，新建/上传时自动使用对应 Provider，无需改代码。
+## 📈 评估中心使用
 
-## 📊 评估中心
+1. 进入「评估中心」→ 创建数据集（自动从 KB 生成 QA 对，或手动导入）
+2. 配置评估组合：embedding × retrieval × rerank × generation（笛卡尔积）
+3. 启动评估，自动跑 8 个指标
+4. 查看报告（`backend/reports/eval_*.json` + `*.md`）
 
-`/evaluation` 页面提供：
+详细算法见 `backend/app/services/eval/metrics.py`（检索）和 `llm_metrics.py`（LLM）。
 
-1. **新建评估**：选 KB → 选数据集（手动 / 自动生成 20 道）→ 勾选要对比的 Embedding / Retrieval / Rerank / LLM 组合
-2. **断点续传**：每个 task 立即 commit，进程被杀后可恢复
-3. **LLM-as-Judge**：每个 task 完成后用 mimo-v2.5 打 3 个分（faithfulness / relevance / completeness）
-4. **RAGAS**（可选）：run 结束后批量跑 6 维评估
-   - faithfulness（防幻觉）
-   - answer_relevancy（答案相关度）
-   - context_relevancy（上下文相关度）
-   - context_recall（上下文召回率）
-   - context_precision（上下文精度）
-   - answer_correctness（答案正确性）
-5. **报告导出**：JSON + Markdown，按 `eval_{name}_{YYYYMMDD_HHMMSS}_{id8}.{json|md}` 命名
-6. **历史永久保留**：DB + `backend/reports/` 不清理
-
-启用 RAGAS：在 `.env` 设 `USE_RAGAS=true`，或在 UI 创建评估时勾选。
-
-## ⚙️ 配置
-
-复制 `backend/.env.example` 为 `backend/.env` 后按需修改：
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `MIMO_API_KEY` | *(空)* | **必填**，从 https://api.xiaomimimo.com/ 申请 |
-| `MIMO_MODEL` | `mimo-v2.5-pro` | 默认生成模型 |
-| `MIMO_LITE_MODEL` | `mimo-v2.5` | LLM-as-Judge 固定使用 |
-| `DEEPSEEK_API_KEY` | *(空)* | 可选，启用 DeepSeek |
-| `GLM_API_KEY` | *(空)* | 可选，启用 GLM |
-| `OLLAMA_EMBED_MODEL` | `qwen3-embedding:0.6b` | 本地 embedding |
-| `HF_CACHE_DIR` | `C:\Users\13596\.cache\huggingface\hub` | HF 模型统一缓存 |
-| `HF_OFFLINE` | `1` | 1=强制离线（推荐），0=允许联网 |
-| `SILICONFLOW_API_KEY` | *(空)* | 可选，启用云端 embedding/rerank |
-| `JWT_SECRET_KEY` | `change-me-...` | **生产必改** |
-| `USE_RAGAS` | `false` | 是否启用 RAGAS 评估 |
-| `DEBUG` | `false` | 调试模式 |
-
-## 💬 对话流程
-
-```
-1. 选 KB（可多选 / 全库）
-2. 加载最近 10 条对话历史
-3. 准备（非流式）：检索 → Rerank → 构造 context
-4. 生成（真流式）：llm.astream() 逐 token 输出
-5. 保存：用户消息 + AI 回答入库
-```
-
-## 🛡 权限
-
-- 每个 KB 通过 `owner_id` 隔离，跨用户访问会被拒绝
-- 管理员账号由 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 配置
-- `/admin/*` 和 `/evaluation` 路由需要 admin 权限（前端 `requiresAdmin` 守卫）
-- JWT 认证，默认 24h 过期
-
-## License
+## 📝 License
 
 MIT

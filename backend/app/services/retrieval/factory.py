@@ -4,7 +4,6 @@ from typing import Dict, Type
 
 from app.services.retrieval.base import RetrievalStrategy
 from app.services.retrieval.bm25_retrieval import BM25Retrieval
-from app.services.retrieval.graph_retrieval import GraphRetrieval
 from app.services.retrieval.rerank_retrieval import RerankRetrieval
 from app.services.retrieval.vector_retrieval import VectorRetrieval
 
@@ -14,7 +13,6 @@ RETRIEVAL_REGISTRY: Dict[str, Type[RetrievalStrategy]] = {
     "vector": VectorRetrieval,
     "bm25": BM25Retrieval,
     "rerank": RerankRetrieval,
-    "graph": GraphRetrieval,
 }
 
 
@@ -35,8 +33,6 @@ def get_retrieval_strategy(
             rerank_model=rerank_model,
             rerank_top_n=rerank_top_n,
         )
-    elif strategy == "graph":
-        return GraphRetrieval(embedding_model=embedding_model)
     elif strategy == "bm25":
         return BM25Retrieval()
     else:

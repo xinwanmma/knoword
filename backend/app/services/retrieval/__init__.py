@@ -4,7 +4,6 @@
 - "vector"  → VectorRetrieval
 - "bm25"    → BM25Retrieval
 - "rerank"  → RerankRetrieval (vector + rerank)
-- "graph"   → GraphRetrieval (Microsoft GraphRAG, 预留)
 """
 from app.services.retrieval.factory import get_retrieval_strategy
 

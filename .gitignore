@@ -2,60 +2,95 @@
 # RAG 知识库系统 - .gitignore
 # ============================================
 
-# --- Python ---
+# --- 操作系统 ---
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+*.swp
+*.swo
+*~
+
+# --- IDE / 编辑器 ---
+.idea/
+.vscode/
+*.iml
+*.code-workspace
+.cursor/
+.aider*
+
+# --- Python 编译/缓存 ---
 __pycache__/
+**/__pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 *$py.class
+*.so
 *.egg-info/
+.eggs/
 dist/
 build/
-.eggs/
 *.egg
 *.whl
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # --- 虚拟环境 ---
 venv/
 .venv/
 env/
-.env.local
+.python-version
 
-# --- 环境变量（包含密钥，不要提交） ---
-backend/.env
+# --- 环境变量（禁止提交） ---
 .env
+.env.local
+.env.*.local
+backend/.env
+backend/.env.local
+backend/.env.*.local
+!.env.example
+
+# --- 数据库 / SQLite ---
+*.db
+*.sqlite
+*.sqlite3
+backend/test.db
+backend/test_chromadb/
 
 # --- 后端运行时数据 ---
 backend/data/
 backend/reports/
-backend/test.db
-backend/test_chromadb/
-backend/*.db
+backend/uploads/
+
+# --- 临时 / 备份 ---
+*.bak
+*.tmp
+*.orig
+*.rej
+*.log
+logs/
+backend/test_metrics.py
+backend/diag_*.py
+backend/tmp_*.py
 
 # --- 前端 ---
 frontend/node_modules/
 frontend/dist/
+frontend/.vite/
+frontend/.cache/
+frontend/.env
+frontend/.env.local
 
-# --- 测试 ---
-.pytest_cache/
+# --- 覆盖率 / 文档构建 ---
 .coverage
 htmlcov/
 coverage.xml
+.tox/
+docs/_build/
 
-# --- IDE ---
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# --- 工具配置（本地生成，不要提交） ---
+# --- 工具配置（本地生成） ---
 .codegraph/
 .reasonix/
 reasonix.toml
-
-# --- OS ---
-.DS_Store
-Thumbs.db
-
-# --- 日志 ---
-*.log
-logs/

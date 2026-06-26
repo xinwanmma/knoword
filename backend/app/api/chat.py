@@ -24,6 +24,7 @@ from app.core.security import get_current_user
 from app.db.database import async_session_factory, get_db
 from app.models.models import Conversation, KnowledgeBase, Message, User
 from app.schemas.schemas import ChatRequest, ConversationOut, MessageOut
+from app.services.llm_provider import get_llm_provider
 from app.services.retrieval_pipeline import prepare_sources
 
 logger = logging.getLogger(__name__)
@@ -199,11 +200,9 @@ async def chat(
 用户问题：{req.query}"""
 
                 # 5. 流式生成
-                from app.core.llm import get_llm
-
                 yield _sse_event("status", {"message": "正在生成回答..."})
 
-                llm = get_llm()
+                llm = get_llm_provider().get_chat_model()
                 async for chunk in llm.astream([HumanMessage(content=system_prompt)]):
                     if chunk.content:
                         full_answer += chunk.content
