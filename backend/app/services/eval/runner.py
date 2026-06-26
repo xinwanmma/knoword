@@ -7,13 +7,13 @@
 4. **可取消**：用户停止时优雅退出，已完成结果全部保留
 5. **独立 session**：每个 task 独立 session，避免连接池耗尽
 
-评估指标（每次都默认跑，**无开关**）：
+评估指标（默认全开 8 个，可手动关闭）：
 - 检索指标（5 个，纯算法）：Recall@K / Precision@K / Hit@K / MRR / NDCG@K
 - LLM 指标（3 个，基于 LangChain）：
   - Faithfulness / Groundedness（基于 retrieved contexts 验证）
   - Answer Relevancy（LLM judge 0/0.5/1）
   - Answer Correctness（F1 + embedding cos sim）
-- LLM 评估模型：settings.MIMO_LITE_MODEL（可在 .env 改）
+- LLM 评估模型：默认 settings.MIMO_MODEL，启动时可用 llm_metric_model 覆盖
 """
 import asyncio
 import logging
@@ -21,7 +21,7 @@ import time
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Set
 
 from sqlalchemy import select
 
@@ -29,15 +29,25 @@ from app.config import settings
 from app.db.database import async_session_factory
 from app.models.eval_models import EvaluationDataset, EvaluationResult, EvaluationRun
 from app.models.models import KnowledgeBase
+from app.schemas.eval_schemas import EVAL_METRIC_KEYS
 from app.services.embedding import get_embedding_provider
-from app.services.eval.llm_metrics import compute_all_llm_metrics
-from app.services.eval.metrics import compute_retrieval_metrics
+from app.services.eval.llm_metrics import (
+    STANDARD_LLM_KEYS, compute_all_llm_metrics,
+)
+from app.services.eval.metrics import STANDARD_RETRIEVAL_KEYS, compute_retrieval_metrics
 from app.services.eval.report import ReportGenerator
 from app.services.llm_provider import get_llm_provider
 from app.services.rerank import get_rerank_provider
 from app.services.retrieval import get_retrieval_strategy
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_enabled(metrics: list | None) -> Set[str]:
+    """规范化启用指标集合：None/空 → 全 8 个；否则按合法 key 过滤。"""
+    if not metrics:
+        return set(EVAL_METRIC_KEYS)
+    return {m for m in metrics if m in EVAL_METRIC_KEYS}
 
 
 class EvalRunner:
@@ -47,6 +57,9 @@ class EvalRunner:
         self.run_id = run_id
         self._stop_flag = asyncio.Event()
         self._semaphore = asyncio.Semaphore(settings.DEFAULT_EVAL_CONCURRENCY)
+        # enabled_metrics 和 llm_metric_model 在 _run() 启动时从 run.config 读
+        self._enabled_metrics: Set[str] = set(EVAL_METRIC_KEYS)
+        self._llm_metric_model: str = settings.MIMO_MODEL
 
     def request_stop(self):
         """用户点击「停止评估」时调用。"""
@@ -72,6 +85,18 @@ class EvalRunner:
             dataset = (await db.execute(
                 select(EvaluationDataset).where(EvaluationDataset.id == run.dataset_id)
             )).scalar_one()
+
+        # 1.1 读 run.config：enabled_metrics / llm_metric_model
+        # 缺省 → 全 8 个 / settings.MIMO_MODEL；老 run 无此字段也走全开
+        cfg = run.config or {}
+        self._enabled_metrics = _normalize_enabled(cfg.get("enabled_metrics"))
+        self._llm_metric_model = (
+            cfg.get("llm_metric_model") or settings.MIMO_MODEL
+        )
+        logger.info(
+            f"EvalRun {self.run_id}: enabled_metrics={sorted(self._enabled_metrics)}, "
+            f"llm_metric_model={self._llm_metric_model}"
+        )
 
         # 1.5 获取 KB 绑定的 embedding model（物理上不能换）
         # ChromaDB collection 维度在 document 写入时已锁定，
@@ -216,7 +241,11 @@ class EvalRunner:
                 await self._save_error_result(task, str(e))
 
     async def _run_single_task(self, task: dict) -> dict:
-        """执行单个 task：检索 → 5 检索指标 → 生成 → 3 LLM 指标。"""
+        """执行单个 task：检索 → 5 检索指标 → 生成 → 3 LLM 指标。
+
+        启用的指标：self._enabled_metrics（来自 run.config）
+        LLM 评估模型：self._llm_metric_model
+        """
         start = time.time()
 
         # 1. 检索（按 embedding_model + retrieval_strategy 路由）
@@ -246,23 +275,28 @@ class EvalRunner:
         response = await llm.ainvoke([{"role": "user", "content": prompt_text}])
         answer = response.content if hasattr(response, "content") else str(response)
 
-        # 3. 5 个标准检索指标（纯算法）
+        # 3. 5 个标准检索指标（按 enabled 过滤）
         ret_metrics = compute_retrieval_metrics(
-            retrieved_ids, task.get("source_chunk_ids", []), k=5
+            retrieved_ids, task.get("source_chunk_ids", []), k=5,
+            enabled=self._enabled_metrics & set(STANDARD_RETRIEVAL_KEYS),
         )
 
-        # 4. 3 个 LLM 指标（Faithfulness / Answer Relevancy / Answer Correctness）
-        #    用 LangChain RunnableParallel 风格并发跑，模型 = settings.MIMO_LITE_MODEL
+        # 4. 3 个 LLM 指标（按 enabled 过滤 + 用 self._llm_metric_model）
         try:
             llm_scores = await compute_all_llm_metrics(
                 question=task["question"],
                 answer=answer,
                 contexts=[c.get("content", "") for c in chunks[:5]],
                 ground_truth=task.get("ground_truth", "") or "",
+                enabled=self._enabled_metrics & set(STANDARD_LLM_KEYS),
+                llm_model=self._llm_metric_model,
             )
             # llm_scores = {faithfulness, answer_relevancy, answer_correctness}
-            # 任一为 None → judge_error = True（复用旧字段避免改 schema）
-            judge_error = any(v is None for v in llm_scores.values())
+            # 未启用或失败 → None；judge_error 只在"启用但失败"时为 True
+            judge_error = any(
+                v is None and key in self._enabled_metrics
+                for key, v in llm_scores.items()
+            )
         except Exception as e:
             logger.exception(f"LLM 指标评估失败: {e}")
             llm_scores = {
@@ -384,8 +418,8 @@ class EvalRunner:
                 select(EvaluationResult).where(EvaluationResult.run_id == self.run_id)
             )).scalars().all()
 
-            # 汇总
-            summary = self._aggregate(results)
+            # 汇总（按本 run 启用的指标 key 过滤）
+            summary = self._aggregate(results, self._enabled_metrics)
             run.summary = summary
 
             # 状态：区分 completed / completed_with_errors / failed
@@ -415,21 +449,25 @@ class EvalRunner:
             logger.exception(f"生成报告失败: {e}")
 
     @staticmethod
-    def _aggregate(results: list) -> dict:
+    def _aggregate(results: list, enabled_metrics: set[str] | None = None) -> dict:
         """汇总所有 result → summary 指标。
 
-        新指标结构（无 use_ragas 开关，每次都跑）：
+        新指标结构：
         - retrieval.{embedding|retrieval|rerank}.{recall_at_5, precision_at_5, hit_at_5, mrr, ndcg_at_5}
         - generation.{model}.{faithfulness, answer_relevancy, answer_correctness}
+
+        enabled_metrics：仅汇总启用的指标 key；None/空 → 全 8 个（向后兼容）
 
         健壮性：safe_avg() 跳过非数字，缺 key 兜底为 0，避免 KeyError。
         """
         # 5 个标准检索指标 + 3 个 LLM 指标（顺序固定）
-        STANDARD_RET_KEYS = (
-            "recall_at_k", "precision_at_k", "hit_at_k", "mrr", "ndcg_at_k",
+        STANDARD_RET_KEYS = tuple(
+            k for k in STANDARD_RETRIEVAL_KEYS
+            if not enabled_metrics or k in enabled_metrics
         )
-        STANDARD_GEN_KEYS = (
-            "faithfulness", "answer_relevancy", "answer_correctness",
+        STANDARD_GEN_KEYS = tuple(
+            k for k in STANDARD_LLM_KEYS
+            if not enabled_metrics or k in enabled_metrics
         )
 
         def safe_avg(values, default=0.0):
@@ -446,16 +484,16 @@ class EvalRunner:
             if r.generation_scores and not r.judge_error and not r.error_message:
                 gen_scores_grouped[r.generation_model].append(r.generation_scores)
 
-        # retrieval: 硬编码 5 个标准 key（统一口径，避免不同 result 字段不同）
+        # retrieval: 仅汇总启用的检索 key
         ret_summary = {
             key: {k: safe_avg([m.get(k) for m in metrics]) for k in STANDARD_RET_KEYS}
             for key, metrics in ret_metrics_grouped.items()
-        }
-        # generation: 硬编码 3 个标准 key
+        } if STANDARD_RET_KEYS else {}
+        # generation: 仅汇总启用的 LLM key
         gen_summary = {
             key: {k: safe_avg([s.get(k) for s in scores]) for k in STANDARD_GEN_KEYS}
             for key, scores in gen_scores_grouped.items()
-        }
+        } if STANDARD_GEN_KEYS else {}
         return {
             "retrieval": ret_summary,
             "generation": gen_summary,

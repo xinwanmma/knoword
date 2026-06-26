@@ -37,6 +37,9 @@ class Settings:
     MIMO_BASE_URL: str = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
     MIMO_API_KEY: str = os.getenv("MIMO_API_KEY", "")
     MIMO_MODEL: str = os.getenv("MIMO_MODEL", "mimo-v2.5-pro")
+    # [已废弃] MIMO_LITE_MODEL 不再作为评估默认 judge LLM，
+    # LLM 评估指标默认改用 MIMO_MODEL（mimo-v2.5-pro）。
+    # 保留字段仅为向后兼容（可被 EvalRunCreate.llm_metric_model 显式覆盖）。
     MIMO_LITE_MODEL: str = os.getenv("MIMO_LITE_MODEL", "mimo-v2.5")
     MIMO_LLM_TEMPERATURE: float = float(os.getenv("MIMO_LLM_TEMPERATURE", "0.7"))
 

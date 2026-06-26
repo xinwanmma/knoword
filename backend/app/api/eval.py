@@ -157,13 +157,21 @@ async def create_run(
         raise HTTPException(status_code=404, detail="数据集不存在")
 
     # 创建 run
+    # enabled_metrics: None → 全 8 个；列表 → 过滤合法 key
+    enabled_metrics = (
+        [m for m in (req.enabled_metrics or EVAL_METRIC_KEYS) if m in EVAL_METRIC_KEYS]
+        or list(EVAL_METRIC_KEYS)
+    )
+    # llm_metric_model: None → settings.MIMO_MODEL
+    llm_metric_model = (req.llm_metric_model or "").strip() or settings.MIMO_MODEL
     config = {
         "embedding_models": req.embedding_models,
         "retrieval_strategies": req.retrieval_strategies,
         "rerank_models": req.rerank_models,
         "generation_models": req.generation_models,
         "concurrency": req.concurrency,
-        "llm_metric_model": settings.MIMO_LITE_MODEL,  # 固定
+        "enabled_metrics": enabled_metrics,    # 落库：保证后续报告可还原
+        "llm_metric_model": llm_metric_model,  # 落库：保证续跑用同一模型
     }
     run = EvaluationRun(
         id=uuid.uuid4(),

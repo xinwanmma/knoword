@@ -6,6 +6,28 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+# ==================== 评估指标 ====================
+
+# 5 个检索指标（纯算法）+ 3 个 LLM 指标（基于 LangChain）
+EVAL_METRIC_KEYS: list[str] = [
+    # 检索
+    "recall_at_k", "precision_at_k", "hit_at_k", "mrr", "ndcg_at_k",
+    # LLM
+    "faithfulness", "answer_relevancy", "answer_correctness",
+]
+
+EVAL_METRIC_LABELS: dict[str, str] = {
+    "recall_at_k": "Recall@K",
+    "precision_at_k": "Precision@K",
+    "hit_at_k": "Hit@K",
+    "mrr": "MRR",
+    "ndcg_at_k": "NDCG@K",
+    "faithfulness": "Faithfulness / Groundedness",
+    "answer_relevancy": "Answer Relevancy",
+    "answer_correctness": "Answer Correctness",
+}
+
+
 # ==================== 数据集 ====================
 
 class QAPair(BaseModel):
@@ -50,8 +72,11 @@ class EvalRunCreate(BaseModel):
     generation_models: list[str] = Field(default_factory=list)
     # 默认参数
     concurrency: int = 4
-    # 评估指标固定 5 检索 + 3 LLM（共 8 个），每次都跑，无开关
-    # LLM 评估模型固定为 settings.MIMO_LITE_MODEL（不允许覆盖）
+    # 启用的评估指标（None = 全开 8 个）
+    # 合法值见 EVAL_METRIC_KEYS
+    enabled_metrics: Optional[list[str]] = None
+    # LLM 评估用的 judge 模型（None = settings.MIMO_MODEL）
+    llm_metric_model: Optional[str] = None
 
 
 class EvalRunProgress(BaseModel):

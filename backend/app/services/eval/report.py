@@ -12,7 +12,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Set
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,8 +20,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db.database import async_session_factory
 from app.models.eval_models import EvaluationResult, EvaluationRun
+from app.schemas.eval_schemas import EVAL_METRIC_KEYS, EVAL_METRIC_LABELS
 
 logger = logging.getLogger(__name__)
+
+
+# 内部小工具：把 enabled list 转 set
+def _enabled_set(value) -> Set[str]:
+    if not value:
+        return set(EVAL_METRIC_KEYS)
+    return {m for m in value if m in EVAL_METRIC_KEYS}
 
 
 def sanitize_filename(name: str) -> str:
@@ -135,70 +143,71 @@ class ReportGenerator:
 
         # 配置
         cfg = run.config or {}
+        enabled = _enabled_set(cfg.get("enabled_metrics"))
+        llm_model = cfg.get("llm_metric_model") or settings.MIMO_MODEL
         lines.append("## 配置")
         lines.append(f"- **Embedding**: {', '.join(cfg.get('embedding_models', []))}")
         lines.append(f"- **Retrieval**: {', '.join(cfg.get('retrieval_strategies', []))}")
         if cfg.get('rerank_models'):
             lines.append(f"- **Rerank**: {', '.join(cfg.get('rerank_models', []))}")
         lines.append(f"- **Generation**: {', '.join(cfg.get('generation_models', []))}")
-        lines.append(f"- **LLM 评估模型**: {settings.MIMO_LITE_MODEL}（可在 .env 改 MIMO_LITE_MODEL）")
-        lines.append(f"- **评估指标**: 5 检索 + 3 LLM（共 8 个，每次都默认跑，无开关）")
+        lines.append(f"- **LLM 评估模型**: {llm_model}")
+        # 启用的指标（带中文 label）
+        enabled_labels = [
+            EVAL_METRIC_LABELS.get(k, k) for k in EVAL_METRIC_KEYS if k in enabled
+        ]
+        lines.append(
+            f"- **启用的指标**（{len(enabled)}/{len(EVAL_METRIC_KEYS)}）: "
+            f"{', '.join(enabled_labels) or '无'}"
+        )
+        # 关闭的指标
+        disabled_keys = [k for k in EVAL_METRIC_KEYS if k not in enabled]
+        if disabled_keys:
+            disabled_labels = [EVAL_METRIC_LABELS.get(k, k) for k in disabled_keys]
+            lines.append(f"- **关闭的指标**: {', '.join(disabled_labels)}")
         lines.append("")
 
-        # 检索指标（5 列）
+        # 检索指标（按 enabled 决定列）
         ret_results = [r for r in results if r.retrieval_metrics]
-        if ret_results:
-            lines.append("## 检索指标汇总（5 个标准指标 · K=5）")
+        if ret_results and enabled & {
+            "recall_at_k", "precision_at_k", "hit_at_k", "mrr", "ndcg_at_k",
+        }:
+            lines.append("## 检索指标汇总（K=5）")
             lines.append("")
-            lines.append(
-                "| Embedding | Retrieval | Rerank | "
-                "Recall@5 | Precision@5 | Hit@5 | MRR | NDCG@5 |"
-            )
-            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+            ret_keys = [
+                k for k in ("recall_at_k", "precision_at_k", "hit_at_k", "mrr", "ndcg_at_k")
+                if k in enabled
+            ]
+            header_metrics = " | ".join(EVAL_METRIC_LABELS[k] for k in ret_keys)
+            lines.append(f"| Embedding | Retrieval | Rerank | {header_metrics} |")
+            lines.append("| --- | --- | --- |" + " --- |" * len(ret_keys))
             # 按 (embedding, retrieval, rerank) 分组
             grouped = defaultdict(list)
             for r in ret_results:
                 key = (r.embedding_model, r.retrieval_strategy, r.rerank_model or "-")
                 grouped[key].append(r.retrieval_metrics)
             for (emb, ret, rm), metrics_list in sorted(grouped.items()):
-                # 5 个标准 key，safe_avg 避免缺字段出错
-                base_keys = (
-                    "recall_at_k", "precision_at_k",
-                    "hit_at_k", "mrr", "ndcg_at_k",
-                )
-                avg = {k: safe_avg([m.get(k) for m in metrics_list]) for k in base_keys}
-                lines.append(
-                    f"| {emb} | {ret} | {rm} | "
-                    f"{avg.get('recall_at_k', 0):.3f} | "
-                    f"{avg.get('precision_at_k', 0):.3f} | "
-                    f"{avg.get('hit_at_k', 0):.3f} | "
-                    f"{avg.get('mrr', 0):.3f} | "
-                    f"{avg.get('ndcg_at_k', 0):.3f} |"
-                )
+                avg = {k: safe_avg([m.get(k) for m in metrics_list]) for k in ret_keys}
+                vals = " | ".join(f"{avg.get(k, 0):.3f}" for k in ret_keys)
+                lines.append(f"| {emb} | {ret} | {rm} | {vals} |")
             lines.append("")
 
-        # 生成质量（3 个 LLM 指标 · 新名字）
+        # 生成质量（3 个 LLM 指标 · 按 enabled 过滤）
         gen_results = [r for r in results if r.generation_scores and not r.judge_error]
-        if gen_results:
-            lines.append("## 生成质量（3 个 LLM 指标 · 基于 LangChain）")
+        gen_keys = [k for k in ("faithfulness", "answer_relevancy", "answer_correctness") if k in enabled]
+        if gen_results and gen_keys:
+            lines.append("## 生成质量（LLM 指标 · 基于 LangChain）")
             lines.append("")
-            lines.append(
-                "| Generation | Faithfulness / Groundedness | "
-                "Answer Relevancy | Answer Correctness |"
-            )
-            lines.append("| --- | --- | --- | --- |")
+            header_gen = " | ".join(EVAL_METRIC_LABELS[k] for k in gen_keys)
+            lines.append(f"| Generation | {header_gen} |")
+            lines.append("| --- |" + " --- |" * len(gen_keys))
             grouped = defaultdict(list)
             for r in gen_results:
                 grouped[r.generation_model].append(r.generation_scores)
-            STANDARD_GEN_KEYS = ("faithfulness", "answer_relevancy", "answer_correctness")
             for gm, scores_list in sorted(grouped.items()):
-                avg = {k: safe_avg([s.get(k) for s in scores_list]) for k in STANDARD_GEN_KEYS}
-                lines.append(
-                    f"| {gm} | "
-                    f"{avg.get('faithfulness', 0):.3f} | "
-                    f"{avg.get('answer_relevancy', 0):.3f} | "
-                    f"{avg.get('answer_correctness', 0):.3f} |"
-                )
+                avg = {k: safe_avg([s.get(k) for s in scores_list]) for k in gen_keys}
+                vals = " | ".join(f"{avg.get(k, 0):.3f}" for k in gen_keys)
+                lines.append(f"| {gm} | {vals} |")
             lines.append("")
 
             # 总体均值（来自 summary）

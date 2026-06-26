@@ -5,16 +5,16 @@
 2. **Answer Relevancy** — LLM judge 0/1
 3. **Answer Correctness** — F1 + embedding cos sim 0.5/0.5
 
-模型：`settings.MIMO_LITE_MODEL`（可在 .env 改）
+模型：默认 `settings.MIMO_MODEL`（可在 .env 改），评估启动时可由 `llm_metric_model` 覆盖
 并发：用 LangChain `RunnableParallel` 跑 3 个指标
 
-每个指标返回 0-1 分数（None 表示评估失败）。
+每个指标返回 0-1 分数（None 表示评估失败或被禁用）。
 """
 import asyncio
 import json
 import logging
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 
 import numpy as np
 from langchain_core.runnables import Runnable, RunnableParallel, RunnableLambda
@@ -31,17 +31,23 @@ from app.services.eval.prompts import (
 logger = logging.getLogger(__name__)
 
 
+# 3 个 LLM 指标的标准 key
+STANDARD_LLM_KEYS: tuple[str, ...] = (
+    "faithfulness", "answer_relevancy", "answer_correctness",
+)
+
+
 # ===== 工具函数 =====
 
-def _build_judge_llm():
-    """构造评估用的 LLM（mimo-lite，可在 .env 改）。"""
+def _build_judge_llm(model_name: Optional[str] = None):
+    """构造评估用的 LLM（默认 settings.MIMO_MODEL，调用方可覆盖）。"""
     from langchain_openai import ChatOpenAI
     if not settings.MIMO_API_KEY:
         raise RuntimeError("MIMO_API_KEY 未配置，无法跑 LLM 评估")
     return ChatOpenAI(
         base_url=settings.MIMO_BASE_URL,
         api_key=settings.MIMO_API_KEY,
-        model=settings.MIMO_LITE_MODEL,
+        model=model_name or settings.MIMO_MODEL,
         temperature=0.0,  # 评估要稳
         timeout=120.0,
         max_retries=2,
@@ -233,22 +239,55 @@ async def compute_all_llm_metrics(
     answer: str,
     contexts: List[str],
     ground_truth: str = "",
+    enabled: Optional[Set[str]] = None,
+    llm_model: Optional[str] = None,
 ) -> Dict[str, Optional[float]]:
     """并发跑 3 个 LLM 指标，返回 {name: score}。
 
-    每个 score 是 0-1，None 表示评估失败。
+    每个 score 是 0-1，None 表示评估失败或被禁用。
+    enabled：仅跑集合内的指标（None = 全跑 3 个）
+    llm_model：覆盖默认 judge LLM（None = settings.MIMO_MODEL）
     """
-    llm = _build_judge_llm()
+    keys = set(enabled) if enabled is not None else set(STANDARD_LLM_KEYS)
+    keys &= set(STANDARD_LLM_KEYS)
+
+    # 全部禁用 → 立即返回 3 个 None
+    if not keys:
+        return {k: None for k in STANDARD_LLM_KEYS}
+
+    # 3 个指标独立计算，按 enabled 跳过
+    faithfulness_coro = (
+        compute_faithfulness(
+            answer=answer, contexts=contexts,
+            llm=_build_judge_llm(llm_model),
+        )
+        if "faithfulness" in keys else _noop()
+    )
+    relevancy_coro = (
+        compute_answer_relevancy(
+            question=question, answer=answer,
+            llm=_build_judge_llm(llm_model),
+        )
+        if "answer_relevancy" in keys else _noop()
+    )
+    correctness_coro = (
+        compute_answer_correctness(answer=answer, ground_truth=ground_truth)
+        if "answer_correctness" in keys else _noop()
+    )
+
     faithfulness, relevancy, correctness = await asyncio.gather(
-        compute_faithfulness(answer=answer, contexts=contexts, llm=llm),
-        compute_answer_relevancy(question=question, answer=answer, llm=llm),
-        compute_answer_correctness(answer=answer, ground_truth=ground_truth),
+        faithfulness_coro, relevancy_coro, correctness_coro,
     )
     return {
-        "faithfulness": faithfulness,
-        "answer_relevancy": relevancy,
-        "answer_correctness": correctness,
+        "faithfulness": faithfulness if "faithfulness" in keys else None,
+        "answer_relevancy": relevancy if "answer_relevancy" in keys else None,
+        "answer_correctness": correctness if "answer_correctness" in keys else None,
     }
+
+
+async def _noop() -> None:
+    """占位 coroutine，用于跳过未启用指标。"""
+    return None
 
 
 # ===== LangChain Runnable 风格封装（可选）=====
@@ -257,12 +296,21 @@ class LLMEvalRunnable(Runnable):
     """LangChain Runnable 风格的 LLM 评估器。
 
     用法：
-        runner = LLMEvalRunnable()
+        runner = LLMEvalRunnable(llm_model="mimo-v2.5", enabled={"faithfulness", "answer_relevancy"})
         result = await runner.ainvoke({
             "question": ..., "answer": ..., "contexts": [...], "ground_truth": ...
         })
-        # result = {"faithfulness": 0.8, "answer_relevancy": 1.0, "answer_correctness": 0.6}
+        # result = {"faithfulness": 0.8, "answer_relevancy": 1.0, "answer_correctness": None}
     """
+
+    def __init__(
+        self,
+        *,
+        llm_model: Optional[str] = None,
+        enabled: Optional[Set[str]] = None,
+    ):
+        self._llm_model = llm_model
+        self._enabled = enabled
 
     def invoke(self, input: dict, config=None, **kwargs) -> dict:
         return asyncio.run(self._acall(input))
@@ -276,26 +324,52 @@ class LLMEvalRunnable(Runnable):
             answer=input.get("answer", ""),
             contexts=input.get("contexts", []),
             ground_truth=input.get("ground_truth", ""),
+            enabled=self._enabled,
+            llm_model=self._llm_model,
         )
 
 
-def build_parallel_eval_chain() -> Runnable:
+def build_parallel_eval_chain(
+    *,
+    llm_model: Optional[str] = None,
+    enabled: Optional[Set[str]] = None,
+) -> Runnable:
     """构造 RunnableParallel 风格的 3 指标并发 chain。
 
     用法：
-        chain = build_parallel_eval_chain()
+        chain = build_parallel_eval_chain(llm_model="mimo-v2.5", enabled={"faithfulness"})
         result = await chain.ainvoke({
             "question": ..., "answer": ..., "contexts": [...], "ground_truth": ...
         })
     """
+    keys = set(enabled) if enabled is not None else set(STANDARD_LLM_KEYS)
+    keys &= set(STANDARD_LLM_KEYS)
+
+    def _maybe(coro_factory, key: str):
+        """按 enabled 决定是否构造 runnable。"""
+        if key in keys:
+            return RunnableLambda(coro_factory)
+        return RunnableLambda(lambda inp: _noop())
+
     return RunnableParallel(
-        faithfulness=RunnableLambda(lambda inp: compute_faithfulness(
-            answer=inp["answer"], contexts=inp["contexts"], llm=_build_judge_llm()
-        )),
-        answer_relevancy=RunnableLambda(lambda inp: compute_answer_relevancy(
-            question=inp["question"], answer=inp["answer"], llm=_build_judge_llm()
-        )),
-        answer_correctness=RunnableLambda(lambda inp: compute_answer_correctness(
-            answer=inp["answer"], ground_truth=inp.get("ground_truth", "")
-        )),
+        faithfulness=_maybe(
+            lambda inp: compute_faithfulness(
+                answer=inp["answer"], contexts=inp["contexts"],
+                llm=_build_judge_llm(llm_model),
+            ),
+            "faithfulness",
+        ),
+        answer_relevancy=_maybe(
+            lambda inp: compute_answer_relevancy(
+                question=inp["question"], answer=inp["answer"],
+                llm=_build_judge_llm(llm_model),
+            ),
+            "answer_relevancy",
+        ),
+        answer_correctness=_maybe(
+            lambda inp: compute_answer_correctness(
+                answer=inp["answer"], ground_truth=inp.get("ground_truth", ""),
+            ),
+            "answer_correctness",
+        ),
     )

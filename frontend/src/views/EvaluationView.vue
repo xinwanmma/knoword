@@ -69,18 +69,65 @@
             </el-checkbox-group>
           </el-form-item>
 
-          <el-form-item label="评估指标">
-            <el-tag type="info">5 检索 + 3 LLM（共 8 个，每次都跑，无开关）</el-tag>
+          <el-form-item label="评估指标（8 个，可手动开关）">
+            <div style="display: flex; flex-direction: column; gap: 8px">
+              <div>
+                <span style="color: #666; margin-right: 8px">检索（5）：</span>
+                <el-checkbox-group v-model="form.enabled_metrics">
+                  <el-checkbox
+                    v-for="m in retrievalMetricOptions"
+                    :key="m.key"
+                    :label="m.key"
+                    :disabled="!canToggleMetrics"
+                  >
+                    {{ m.label }}
+                  </el-checkbox>
+                </el-checkbox-group>
+              </div>
+              <div>
+                <span style="color: #666; margin-right: 8px">LLM（3）：</span>
+                <el-checkbox-group v-model="form.enabled_metrics">
+                  <el-checkbox
+                    v-for="m in llmMetricOptions"
+                    :key="m.key"
+                    :label="m.key"
+                    :disabled="!canToggleMetrics"
+                  >
+                    {{ m.label }}
+                  </el-checkbox>
+                </el-checkbox-group>
+              </div>
+            </div>
+            <div style="margin-top: 8px; display: flex; gap: 8px">
+              <el-button size="small" @click="selectAllMetrics" :disabled="!canToggleMetrics">全选</el-button>
+              <el-button size="small" @click="selectNoMetrics" :disabled="!canToggleMetrics">全不选</el-button>
+              <el-button size="small" type="primary" plain @click="resetToDefaultMetrics" :disabled="!canToggleMetrics">
+                恢复默认（全开）
+              </el-button>
+              <span style="color: #999; align-self: center; margin-left: 8px">
+                当前已选 {{ form.enabled_metrics.length }} / {{ allMetricOptions.length }} 个
+              </span>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="LLM 评估模型">
+            <el-select
+              v-model="form.llm_metric_model"
+              placeholder="默认 mimo-v2.5"
+              style="width: 280px"
+              allow-create
+              filterable
+              clearable
+            >
+              <el-option
+                v-for="m in llmMetricModelOptions"
+                :key="m"
+                :label="m"
+                :value="m"
+              />
+            </el-select>
             <span style="margin-left: 10px; color: #999">
-              检索：Recall@K / Precision@K / Hit@K / MRR / NDCG@K
-            </span>
-            <br>
-            <span style="margin-left: 0px; color: #999">
-              LLM：Faithfulness / Answer Relevancy / Answer Correctness
-            </span>
-            <br>
-            <span style="margin-left: 0px; color: #999">
-              LLM 评估模型：{{ mimoLiteModel }}（.env 中 MIMO_LITE_MODEL 可改）
+              默认 settings.MIMO_MODEL，可在启动时覆盖
             </span>
           </el-form-item>
 
@@ -163,14 +210,17 @@
         <h3>{{ reportData.name }}</h3>
         <p>状态：<el-tag>{{ reportData.status }}</el-tag></p>
         <p>任务：{{ reportData.completed_tasks }} / {{ reportData.total_tasks }}</p>
-        <p>配置：</p>
+        <h4>配置</h4>
         <ul>
           <li>Embedding: {{ reportData.config.embedding_models?.join(', ') }}</li>
           <li>Retrieval: {{ reportData.config.retrieval_strategies?.join(', ') }}</li>
           <li v-if="reportData.config.rerank_models?.length">Rerank: {{ reportData.config.rerank_models.join(', ') }}</li>
           <li>Generation: {{ reportData.config.generation_models?.join(', ') }}</li>
-          <li>LLM 评估模型: {{ reportData.config.llm_metric_model || mimoLiteModel }}</li>
-          <li>评估指标: 5 检索 + 3 LLM（共 8 个，每次都跑）</li>
+          <li>LLM 评估模型: {{ reportData.config.llm_metric_model || 'mimo-v2.5' }}</li>
+          <li>
+            启用的指标（{{ reportEnabledCount }} / {{ allMetricOptions.length }}）：
+            {{ reportEnabledLabels || '无' }}
+          </li>
         </ul>
         <h4>Summary</h4>
         <pre style="background: #f5f5f5; padding: 12px; border-radius: 4px; max-height: 400px; overflow: auto;">{{ JSON.stringify(reportData.summary, null, 2) }}</pre>
@@ -221,6 +271,28 @@ const datasets = ref([])
 const runs = ref([])
 
 // Form
+const ALL_METRIC_KEYS = [
+  'recall_at_k', 'precision_at_k', 'hit_at_k', 'mrr', 'ndcg_at_k',
+  'faithfulness', 'answer_relevancy', 'answer_correctness',
+]
+const METRIC_LABELS = {
+  recall_at_k: 'Recall@K',
+  precision_at_k: 'Precision@K',
+  hit_at_k: 'Hit@K',
+  mrr: 'MRR',
+  ndcg_at_k: 'NDCG@K',
+  faithfulness: 'Faithfulness',
+  answer_relevancy: 'Answer Relevancy',
+  answer_correctness: 'Answer Correctness',
+}
+const allMetricOptions = ALL_METRIC_KEYS.map(k => ({ key: k, label: METRIC_LABELS[k] || k }))
+const retrievalMetricOptions = allMetricOptions.filter(m =>
+  ['recall_at_k', 'precision_at_k', 'hit_at_k', 'mrr', 'ndcg_at_k'].includes(m.key)
+)
+const llmMetricOptions = allMetricOptions.filter(m =>
+  ['faithfulness', 'answer_relevancy', 'answer_correctness'].includes(m.key)
+)
+
 const form = ref({
   name: '',
   kb_id: null,
@@ -231,10 +303,19 @@ const form = ref({
   retrieval_strategies: ['vector'],
   rerank_models: ['BAAI/bge-reranker-base'],
   generation_models: ['mimo-v2.5-pro'],
+  // 默认 8 个指标全开
+  enabled_metrics: [...ALL_METRIC_KEYS],
+  // LLM 评估模型默认 mimo-v2.5（即 settings.MIMO_MODEL，可在启动时覆盖）
+  llm_metric_model: 'mimo-v2.5',
 })
 
-// LLM 评估模型（默认 mimo-lite，可在 .env 中 MIMO_LITE_MODEL 修改）
-const mimoLiteModel = ref(import.meta.env.VITE_MIMO_LITE_MODEL || 'mimo-lite')
+// LLM 评估模型下拉选项（用户可手输）
+const llmMetricModelOptions = ['mimo-v2.5', 'mimo-v2.5-pro', 'mimo-lite']
+
+const canToggleMetrics = computed(() => !starting.value)
+const selectAllMetrics = () => { form.value.enabled_metrics = [...ALL_METRIC_KEYS] }
+const selectNoMetrics = () => { form.value.enabled_metrics = [] }
+const resetToDefaultMetrics = () => { form.value.enabled_metrics = [...ALL_METRIC_KEYS] }
 
 const concurrencyMarks = { 1: '1', 2: '2', 4: '4', 6: '6', 8: '8' }
 const retrievalOptions = ['vector', 'bm25', 'rerank']
@@ -256,6 +337,7 @@ const loadingRuns = ref(false)
 const canStart = computed(() => {
   return form.value.name && form.value.dataset_id && form.value.embedding_models.length
     && form.value.retrieval_strategies.length && form.value.generation_models.length
+    && form.value.enabled_metrics.length > 0
 })
 
 const statusType = (s) => ({
@@ -419,6 +501,8 @@ const resetForm = () => {
     retrieval_strategies: ['vector'],
     rerank_models: ['BAAI/bge-reranker-base'],
     generation_models: ['mimo-v2.5-pro'],
+    enabled_metrics: [...ALL_METRIC_KEYS],
+    llm_metric_model: 'mimo-v2.5',
   }
 }
 </script>
