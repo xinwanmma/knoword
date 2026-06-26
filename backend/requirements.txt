@@ -41,6 +41,7 @@ jieba>=0.42.1                  # 中文分词（BM25）
 # --- 评估 (RAGAS) ---
 ragas>=0.1.0                   # RAG 评估框架
 datasets>=2.20.0               # RAGAS 依赖
+langchain-google-vertexai>=2.0.0  # 解决 RAGAS 0.1.x ↔ langchain_community 0.3+ 兼容问题（RAGAS 内部硬编码 import）
 
 # --- 记忆系统 ---
 # Store: PostgreSQL JSONB (不需要额外依赖)

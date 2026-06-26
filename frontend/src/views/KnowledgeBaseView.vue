@@ -38,6 +38,12 @@
           <span class="doc-count">{{ kb.document_count }} 个文档</span>
         </div>
         <p class="kb-desc">{{ kb.description || '暂无描述' }}</p>
+        <div class="kb-tags">
+          <el-tag size="small" type="info">{{ kb.embedding_model }}</el-tag>
+          <el-tag size="small" type="success">{{ kb.chunking_strategy }}</el-tag>
+          <el-tag size="small" type="warning">{{ kb.retrieval_strategy }}</el-tag>
+          <el-tag v-if="kb.rerank_model" size="small" type="danger">rerank</el-tag>
+        </div>
       </el-card>
 
       <div v-if="knowledgeBases.length === 0" class="empty-state">
@@ -51,15 +57,88 @@
     <el-dialog
       v-model="kbDialogVisible"
       :title="editingKb ? '编辑知识库' : '创建知识库'"
-      width="500px"
+      width="640px"
     >
-      <el-form :model="kbForm" label-width="80px">
-        <el-form-item label="名称">
+      <el-form :model="kbForm" label-width="110px">
+        <el-form-item label="名称" required>
           <el-input v-model="kbForm.name" placeholder="知识库名称" />
         </el-form-item>
         <el-form-item label="描述">
-          <el-input v-model="kbForm.description" type="textarea" :rows="3" placeholder="可选描述" />
+          <el-input v-model="kbForm.description" type="textarea" :rows="2" placeholder="可选描述" />
         </el-form-item>
+
+        <el-divider content-position="left">Embedding 模型</el-divider>
+        <el-form-item label="Embedding">
+          <el-select v-model="kbForm.embedding_model" style="width: 100%" @change="onEmbeddingChange">
+            <el-option-group label="Ollama（本地）">
+              <el-option label="qwen3-embedding:0.6b（推荐）" value="qwen3-embedding:0.6b" />
+              <el-option label="nomic-embed-text" value="nomic-embed-text" />
+              <el-option label="mxbai-embed-large" value="mxbai-embed-large" />
+            </el-option-group>
+            <el-option-group label="HuggingFace（本地离线）">
+              <el-option label="shibing624/text2vec-base-chinese" value="shibing624/text2vec-base-chinese" />
+              <el-option label="BAAI/bge-small-zh-v1.5" value="BAAI/bge-small-zh-v1.5" />
+              <el-option label="BAAI/bge-base-zh-v1.5" value="BAAI/bge-base-zh-v1.5" />
+            </el-option-group>
+            <el-option-group label="SiliconFlow（云端 API，需 Key）">
+              <el-option label="Qwen/Qwen3-Embedding-4B" value="Qwen/Qwen3-Embedding-4B" />
+              <el-option label="Qwen/Qwen3-Embedding-8B" value="Qwen/Qwen3-Embedding-8B" />
+              <el-option label="BAAI/bge-m3" value="BAAI/bge-m3" />
+            </el-option-group>
+          </el-select>
+        </el-form-item>
+
+        <el-divider content-position="left">分块策略</el-divider>
+        <el-form-item label="策略">
+          <el-radio-group v-model="kbForm.chunking_strategy">
+            <el-radio-button label="fixed_size">固定长度</el-radio-button>
+            <el-radio-button label="recursive">递归分割</el-radio-button>
+            <el-radio-button label="semantic">语义切分</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="块大小">
+          <el-input-number v-model="kbForm.chunk_size" :min="100" :max="2000" :step="50" />
+          <span class="form-hint">字符数，100-2000</span>
+        </el-form-item>
+        <el-form-item label="重叠">
+          <el-input-number v-model="kbForm.chunk_overlap" :min="0" :max="500" :step="10" />
+          <span class="form-hint">块间重叠字符数</span>
+        </el-form-item>
+
+        <el-divider content-position="left">检索策略</el-divider>
+        <el-form-item label="Retrieval">
+          <el-radio-group v-model="kbForm.retrieval_strategy">
+            <el-radio-button label="vector">向量检索</el-radio-button>
+            <el-radio-button label="bm25">BM25</el-radio-button>
+            <el-radio-button label="rerank">向量 + Rerank</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="kbForm.retrieval_strategy === 'rerank'" label="Rerank 模型">
+          <el-select v-model="kbForm.rerank_model" style="width: 100%">
+            <el-option-group label="HuggingFace（本地）">
+              <el-option label="BAAI/bge-reranker-base" value="BAAI/bge-reranker-base" />
+              <el-option label="BAAI/bge-reranker-large" value="BAAI/bge-reranker-large" />
+            </el-option-group>
+            <el-option-group label="SiliconFlow（云端 API，需 Key）">
+              <el-option label="Qwen/Qwen3-Reranker-4B" value="Qwen/Qwen3-Reranker-4B" />
+            </el-option-group>
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="kbForm.retrieval_strategy === 'rerank'" label="Top N">
+          <el-input-number v-model="kbForm.rerank_top_n" :min="5" :max="100" :step="5" />
+          <span class="form-hint">重排序后保留的文档数</span>
+        </el-form-item>
+
+        <el-alert
+          v-if="editingKb && embeddingChanged"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-top: 12px"
+        >
+          <template #title>修改 Embedding 模型需重新上传所有文档</template>
+          现有向量是用 {{ editingKb.embedding_model }} 生成的，更换后需删除文档后重新上传。
+        </el-alert>
       </el-form>
       <template #footer>
         <el-button @click="kbDialogVisible = false">取消</el-button>
@@ -132,7 +211,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, reactive } from 'vue'
+import { ref, onMounted, reactive, computed } from 'vue'
 import { kbAPI, docAPI } from '../api'
 import { Plus, Edit, Delete, Document, Folder, UploadFilled, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -147,9 +226,25 @@ const documents = ref([])
 const uploadFiles = ref([])
 const uploading = ref(false)
 
-const kbForm = reactive({
+// 表单默认值（与后端 KnowledgeBaseCreate schema 一致）
+const DEFAULT_FORM = {
   name: '',
   description: '',
+  embedding_model: 'qwen3-embedding:0.6b',
+  chunking_strategy: 'recursive',
+  chunk_size: 500,
+  chunk_overlap: 50,
+  retrieval_strategy: 'vector',
+  rerank_model: 'BAAI/bge-reranker-base',
+  rerank_top_n: 20,
+}
+
+const kbForm = reactive({ ...DEFAULT_FORM })
+
+// 检测 embedding 模型变化（编辑时）
+const embeddingChanged = computed(() => {
+  if (!editingKb.value) return false
+  return editingKb.value.embedding_model !== kbForm.embedding_model
 })
 
 onMounted(() => {
@@ -165,15 +260,23 @@ async function loadKbs() {
 
 function showCreateDialog() {
   editingKb.value = null
-  kbForm.name = ''
-  kbForm.description = ''
+  Object.assign(kbForm, DEFAULT_FORM)
   kbDialogVisible.value = true
 }
 
 function editKb(kb) {
   editingKb.value = kb
-  kbForm.name = kb.name
-  kbForm.description = kb.description || ''
+  Object.assign(kbForm, {
+    name: kb.name,
+    description: kb.description || '',
+    embedding_model: kb.embedding_model || DEFAULT_FORM.embedding_model,
+    chunking_strategy: kb.chunking_strategy || DEFAULT_FORM.chunking_strategy,
+    chunk_size: kb.chunk_size || DEFAULT_FORM.chunk_size,
+    chunk_overlap: kb.chunk_overlap || DEFAULT_FORM.chunk_overlap,
+    retrieval_strategy: kb.retrieval_strategy || DEFAULT_FORM.retrieval_strategy,
+    rerank_model: kb.rerank_model || DEFAULT_FORM.rerank_model,
+    rerank_top_n: kb.rerank_top_n || DEFAULT_FORM.rerank_top_n,
+  })
   kbDialogVisible.value = true
 }
 
@@ -182,25 +285,28 @@ async function saveKb() {
     ElMessage.warning('请输入知识库名称')
     return
   }
+  if (kbForm.chunk_overlap >= kbForm.chunk_size) {
+    ElMessage.warning('重叠字符数不能 ≥ 块大小')
+    return
+  }
   saving.value = true
   try {
+    const payload = { ...kbForm }
     if (editingKb.value) {
-      await kbAPI.update(editingKb.value.id, {
-        name: kbForm.name,
-        description: kbForm.description,
-      })
+      await kbAPI.update(editingKb.value.id, payload)
       ElMessage.success('更新成功')
     } else {
-      await kbAPI.create({
-        name: kbForm.name,
-        description: kbForm.description,
-      })
+      await kbAPI.create(payload)
       ElMessage.success('创建成功')
     }
     kbDialogVisible.value = false
     await loadKbs()
   } catch (err) { console.error(err) }
   saving.value = false
+}
+
+function onEmbeddingChange() {
+  // 占位：未来可以根据 embedding 切换推荐其他配置
 }
 
 async function deleteKb(kb) {
@@ -331,6 +437,20 @@ async function reindexDoc(doc) {
   color: #606266;
   font-size: 14px;
   line-height: 1.5;
+  margin: 0 0 8px;
+}
+
+.kb-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.form-hint {
+  margin-left: 12px;
+  color: #909399;
+  font-size: 12px;
 }
 
 .upload-area {

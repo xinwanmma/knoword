@@ -1658,3 +1658,67 @@ frontend/src/
     - 并发只在 **run 内部** 的 task 之间（4 路 Semaphore）
 
 **确认后开始执行 Phase 1（LangGraph → LangChain）**。
+
+---
+
+# 📌 多 Embedding 评估方案（2026-06-26 补充）
+
+## 背景
+
+当前评估系统强制使用 KB 绑定的 embedding model（ChromaDB collection 维度已锁），无法在评估时对比不同 embedding 的效果。
+
+## 目标
+
+支持评估时对比多个 embedding model / chunking strategy / retrieval strategy 的效果。
+
+## 方案对比
+
+| 方案 | 实现难度 | 性能 | 用户体验 | 备注 |
+|------|----------|------|----------|------|
+| A. 临时重建 collection | ★★ | 慢（首次） | 自动无感 | 简单但耗时 |
+| B. (KB, embedding) 一 collection | ★★★ | 快 | 一次建库多次评估 | 数据冗余 |
+| C. 临时多 KB 评估 | ★ | 慢（手动） | 需手动建库 | 最稳 |
+| D. 只测 KB 绑定 embedding | 0 | 快 | 不能对比 | 当前 |
+
+## 推荐：方案 A（临时重建）
+
+### 流程
+
+1. 评估 task 展开时检查 (KB_id, embedding_model) 组合
+2. 如果该组合的 collection 已存在 → 跳过重建，复用
+3. 否则：
+   - 读 KB 所有 ready 文档
+   - 用目标 embedding 重新向量化
+   - 写入临时 collection（name: `eval_{run_id8}_{embed_short8}`）
+4. query 检索时用目标 embedding + 临时 collection
+5. 评估完成后删除临时 collection（保留 24h 便于调试）
+
+### 关键代码点
+
+- `eval/services/eval/embed_rebuilder.py`（新建）
+  - `class EmbedRebuilder:`
+    - `async def ensure_collection(kb_id, embedding_model) -> str` → collection 名
+    - `async def cleanup_expired_collections()` → 删 24h+ 的
+- `vectorstore.py` 加 `get_or_create_eval_collection(kb_id, embedding_model)`
+- `runner.py` 在 `_run_single_task` 前调用 rebuilder
+
+### 性能估算
+
+- 100 文档 × 5 embedding = 500 次向量化
+- 单次 ~2s = 1000s ≈ 17 分钟（首次重建）
+- 后续跑同数据集只用同 embedding → 复用 collection → 0 重建
+
+## 备选：方案 C（临时多 KB）
+
+不重构，向用户暴露"如要对比 embedding，需手动建多个 KB（每个用不同 embedding 重新上传文档）"。
+
+更可控，用户能感知到代价。本次 P0 已实现：**KB 创建时可选 embedding_model**。
+
+## 实施检查清单（方案 A 后续 PR）
+
+- [ ] `embed_rebuilder.py` 新建
+- [ ] `vectorstore.py` 加 `get_or_create_eval_collection()`
+- [ ] `runner.py` 在 `_run_single_task` 前调用 rebuilder
+- [ ] `eval/runner.py` 在 `_finalize_run` 后调 `cleanup_expired_collections()`
+- [ ] 前端加"对比不同 embedding"说明 alert
+- [ ] 测试：同 KB 跑 3 个 embedding，验证 collection 切换
