@@ -80,7 +80,6 @@ class KnowledgeBaseOut(BaseModel):
     retrieval_strategy: str = "vector"
     rerank_model: str = "BAAI/bge-reranker-base"
     rerank_top_n: int = 20
-    graphrag_indexed: bool = False
 
     class Config:
         from_attributes = True

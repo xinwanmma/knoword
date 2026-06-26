@@ -44,7 +44,6 @@ class KnowledgeBase(Base):
     # rerank 配置（仅 retrieval_strategy="rerank" 时生效）
     rerank_model = Column(String(100), default="BAAI/bge-reranker-base")
     rerank_top_n = Column(Integer, default=20)
-    graphrag_indexed = Column(Boolean, default=False)
 
     owner = relationship("User", back_populates="knowledge_bases")
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")

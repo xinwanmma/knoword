@@ -30,7 +30,6 @@ def _to_out(kb: KnowledgeBase, doc_count: int = 0) -> KnowledgeBaseOut:
         retrieval_strategy=kb.retrieval_strategy or "vector",
         rerank_model=kb.rerank_model or "BAAI/bge-reranker-base",
         rerank_top_n=kb.rerank_top_n or 20,
-        graphrag_indexed=kb.graphrag_indexed or False,
     )
 
 
