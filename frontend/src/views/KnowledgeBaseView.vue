@@ -117,7 +117,6 @@
           <el-select v-model="kbForm.rerank_model" style="width: 100%">
             <el-option-group label="HuggingFace（本地）">
               <el-option label="BAAI/bge-reranker-base" value="BAAI/bge-reranker-base" />
-              <el-option label="BAAI/bge-reranker-large" value="BAAI/bge-reranker-large" />
             </el-option-group>
             <el-option-group label="SiliconFlow（云端 API，需 Key）">
               <el-option label="Qwen/Qwen3-Reranker-4B" value="Qwen/Qwen3-Reranker-4B" />
