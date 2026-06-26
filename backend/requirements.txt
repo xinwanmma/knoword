@@ -26,7 +26,7 @@ python-jose[cryptography]>=3.3.0
 bcrypt>=4.0.0
 pydantic[email]>=2.7.0
 
-# --- LangChain (无 LangGraph) ---
+# --- LangChain (核心架构，无 LangGraph，无 RAGAS) ---
 langchain-core>=0.3.0
 langchain-openai>=0.1.0    # MiMo/DeepSeek/GLM (OpenAI 兼容)
 langchain-ollama>=0.2.0     # OllamaEmbeddings (本地 embedding)
@@ -38,10 +38,10 @@ sentence-transformers>=2.7.0   # HF embedding + rerank (CrossEncoder)
 rank_bm25>=0.2.2               # BM25 检索
 jieba>=0.42.1                  # 中文分词（BM25）
 
-# --- 评估 (RAGAS) ---
-ragas>=0.1.0                   # RAG 评估框架
-datasets>=2.20.0               # RAGAS 依赖
-langchain-google-vertexai>=2.0.0  # 解决 RAGAS 0.1.x ↔ langchain_community 0.3+ 兼容问题（RAGAS 内部硬编码 import）
+# --- 评估（自实现，无 ragas/datasets）---
+# 5 检索指标：Recall@K / Precision@K / Hit@K / MRR / NDCG@K（metrics.py 纯算法）
+# 3 LLM 指标：Faithfulness / Answer Relevancy / Answer Correctness（llm_metrics.py + LangChain）
+# LLM 评估模型：settings.MIMO_LITE_MODEL（.env 中可改）
 
 # --- 记忆系统 ---
 # Store: PostgreSQL JSONB (不需要额外依赖)

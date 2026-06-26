@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.security import get_current_user, require_admin
 from app.db.database import async_session_factory, get_db
 from app.models.eval_models import EvaluationDataset, EvaluationResult, EvaluationRun
@@ -162,8 +163,7 @@ async def create_run(
         "rerank_models": req.rerank_models,
         "generation_models": req.generation_models,
         "concurrency": req.concurrency,
-        "judge_model": "mimo-v2.5",  # 固定（前端不可改）
-        "use_ragas": req.use_ragas,
+        "llm_metric_model": settings.MIMO_LITE_MODEL,  # 固定
     }
     run = EvaluationRun(
         id=uuid.uuid4(),
@@ -178,7 +178,7 @@ async def create_run(
     await db.refresh(run)
 
     # 启动后台任务（asyncio.create_task）
-    runner = get_or_create_runner(run.id, use_ragas=req.use_ragas)
+    runner = get_or_create_runner(run.id)
     asyncio.create_task(runner.start())
 
     return EvalRunProgress(
@@ -286,9 +286,8 @@ async def resume_run(
     run.last_resumed_at = __import__("datetime").datetime.utcnow()
     await db.commit()
 
-    # 从 config 读 use_ragas（默认 false）
-    use_ragas = bool((run.config or {}).get("use_ragas", False))
-    runner = get_or_create_runner(run_id, use_ragas=use_ragas)
+    # 续跑直接用默认 runner（无 use_ragas 开关）
+    runner = get_or_create_runner(run_id)
     asyncio.create_task(runner.start())
     return {"resumed": True, "resume_count": run.resume_count}
 

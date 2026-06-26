@@ -50,9 +50,8 @@ class EvalRunCreate(BaseModel):
     generation_models: list[str] = Field(default_factory=list)
     # 默认参数
     concurrency: int = 4
-    # LLM-as-Judge 固定为 mimo-v2.5（不允许覆盖）
-    # RAGAS 评估开关
-    use_ragas: bool = False  # 跑完后再批量评估（慢但更全面）
+    # 评估指标固定 5 检索 + 3 LLM（共 8 个），每次都跑，无开关
+    # LLM 评估模型固定为 settings.MIMO_LITE_MODEL（不允许覆盖）
 
 
 class EvalRunProgress(BaseModel):
@@ -98,13 +97,11 @@ class EvalResultOut(BaseModel):
     generation_model: str
     retrieved_chunks: Optional[list[dict]]
     generated_answer: Optional[str]
-    retrieval_metrics: Optional[dict]
-    generation_scores: Optional[dict]
-    ragas_scores: Optional[dict]  # 新增：RAGAS 6 个指标
+    retrieval_metrics: Optional[dict]  # 5 检索指标（recall_at_k/precision_at_k/hit_at_k/mrr/ndcg_at_k）
+    generation_scores: Optional[dict]  # 3 LLM 指标（faithfulness/answer_relevancy/answer_correctness）
     latency_ms: Optional[int]
     error_message: Optional[str]
     judge_error: bool
-    ragas_error: bool  # 新增
 
     class Config:
         from_attributes = True

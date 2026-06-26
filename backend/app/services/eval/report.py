@@ -103,13 +103,13 @@ class ReportGenerator:
             "retrieval_strategy": r.retrieval_strategy,
             "rerank_model": r.rerank_model,
             "generation_model": r.generation_model,
+            "retrieved_chunks": r.retrieved_chunks,
+            "generated_answer": r.generated_answer,
             "retrieval_metrics": r.retrieval_metrics,
             "generation_scores": r.generation_scores,
-            "ragas_scores": r.ragas_scores,
             "latency_ms": r.latency_ms,
             "error_message": r.error_message,
             "judge_error": r.judge_error,
-            "ragas_error": r.ragas_error,
         }
 
     def _render_markdown(self, run: EvaluationRun, results: List[EvaluationResult]) -> str:
@@ -141,104 +141,90 @@ class ReportGenerator:
         if cfg.get('rerank_models'):
             lines.append(f"- **Rerank**: {', '.join(cfg.get('rerank_models', []))}")
         lines.append(f"- **Generation**: {', '.join(cfg.get('generation_models', []))}")
-        lines.append(f"- **LLM-as-Judge**: mimo-v2.5（固定）")
-        lines.append(f"- **RAGAS**: {'✅ 启用' if cfg.get('use_ragas') else '❌ 未启用'}")
+        lines.append(f"- **LLM 评估模型**: {settings.MIMO_LITE_MODEL}（可在 .env 改 MIMO_LITE_MODEL）")
+        lines.append(f"- **评估指标**: 5 检索 + 3 LLM（共 8 个，每次都默认跑，无开关）")
         lines.append("")
 
-        # 检索指标
+        # 检索指标（5 列）
         ret_results = [r for r in results if r.retrieval_metrics]
         if ret_results:
-            lines.append("## 检索指标汇总")
+            lines.append("## 检索指标汇总（5 个标准指标 · K=5）")
             lines.append("")
-            lines.append("| Embedding | Retrieval | Rerank | Hit@5 | MRR | NDCG@5 | Recall@5 |")
-            lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+            lines.append(
+                "| Embedding | Retrieval | Rerank | "
+                "Recall@5 | Precision@5 | Hit@5 | MRR | NDCG@5 |"
+            )
+            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
             # 按 (embedding, retrieval, rerank) 分组
             grouped = defaultdict(list)
             for r in ret_results:
                 key = (r.embedding_model, r.retrieval_strategy, r.rerank_model or "-")
                 grouped[key].append(r.retrieval_metrics)
             for (emb, ret, rm), metrics_list in sorted(grouped.items()):
-                # 修复：用并集作 base_keys（单个 result 字段缺失不影响整体），
-                # safe_avg + dict.get() 避免 KeyError
-                base_keys = set()
-                for m in metrics_list:
-                    base_keys.update((m or {}).keys())
+                # 5 个标准 key，safe_avg 避免缺字段出错
+                base_keys = (
+                    "recall_at_k", "precision_at_k",
+                    "hit_at_k", "mrr", "ndcg_at_k",
+                )
                 avg = {k: safe_avg([m.get(k) for m in metrics_list]) for k in base_keys}
                 lines.append(
-                    f"| {emb} | {ret} | {rm} | {avg.get('hit_at_5', 0):.3f} | "
-                    f"{avg.get('mrr', 0):.3f} | {avg.get('ndcg_at_5', 0):.3f} | "
-                    f"{avg.get('recall_at_5', 0):.3f} |"
+                    f"| {emb} | {ret} | {rm} | "
+                    f"{avg.get('recall_at_k', 0):.3f} | "
+                    f"{avg.get('precision_at_k', 0):.3f} | "
+                    f"{avg.get('hit_at_k', 0):.3f} | "
+                    f"{avg.get('mrr', 0):.3f} | "
+                    f"{avg.get('ndcg_at_k', 0):.3f} |"
                 )
             lines.append("")
 
-        # 生成质量（LLM-as-Judge）
+        # 生成质量（3 个 LLM 指标 · 新名字）
         gen_results = [r for r in results if r.generation_scores and not r.judge_error]
         if gen_results:
-            lines.append("## 生成质量（LLM-as-Judge · mimo-v2.5）")
+            lines.append("## 生成质量（3 个 LLM 指标 · 基于 LangChain）")
             lines.append("")
-            lines.append("| Generation | Faithfulness | Relevance | Completeness |")
+            lines.append(
+                "| Generation | Faithfulness / Groundedness | "
+                "Answer Relevancy | Answer Correctness |"
+            )
             lines.append("| --- | --- | --- | --- |")
             grouped = defaultdict(list)
             for r in gen_results:
                 grouped[r.generation_model].append(r.generation_scores)
-            STANDARD_GEN_KEYS = ("faithfulness", "relevance", "completeness")
+            STANDARD_GEN_KEYS = ("faithfulness", "answer_relevancy", "answer_correctness")
             for gm, scores_list in sorted(grouped.items()):
-                # 修复：硬编码 3 个标准 key，缺 key 的 result 该维度被跳过
                 avg = {k: safe_avg([s.get(k) for s in scores_list]) for k in STANDARD_GEN_KEYS}
                 lines.append(
-                    f"| {gm} | {avg.get('faithfulness', 0):.2f} | "
-                    f"{avg.get('relevance', 0):.2f} | {avg.get('completeness', 0):.2f} |"
+                    f"| {gm} | "
+                    f"{avg.get('faithfulness', 0):.3f} | "
+                    f"{avg.get('answer_relevancy', 0):.3f} | "
+                    f"{avg.get('answer_correctness', 0):.3f} |"
                 )
             lines.append("")
 
-        # RAGAS 指标
-        ragas_results = [r for r in results if r.ragas_scores and not r.ragas_error]
-        if ragas_results:
-            lines.append("## 生成质量（RAGAS · 更全面）")
-            lines.append("")
-            ragas_metric_names = [
-                "faithfulness", "answer_relevancy", "context_relevancy",
-                "context_recall", "context_precision", "answer_correctness",
-            ]
-            header = "| Generation | " + " | ".join(ragas_metric_names) + " |"
-            sep = "| --- | " + " | ".join(["---"] * len(ragas_metric_names)) + " |"
-            lines.append(header)
-            lines.append(sep)
-            grouped = defaultdict(list)
-            for r in ragas_results:
-                grouped[r.generation_model].append(r.ragas_scores)
-            for gm, scores_list in sorted(grouped.items()):
-                row = [gm]
-                for m in ragas_metric_names:
-                    vals = [s.get(m) for s in scores_list if s.get(m) is not None]
-                    if vals:
-                        row.append(f"{sum(vals) / len(vals):.3f}")
-                    else:
-                        row.append("-")
-                lines.append("| " + " | ".join(row) + " |")
-            lines.append("")
-
-            # RAGAS 整体汇总（来自 summary）
+            # 总体均值（来自 summary）
             summary = run.summary or {}
-            ragas_overall = summary.get("ragas", {})
-            if ragas_overall and isinstance(ragas_overall, dict):
-                lines.append("### RAGAS 总体均值")
-                for m, v in ragas_overall.items():
-                    if m != "error" and isinstance(v, (int, float)):
-                        lines.append(f"- {m}: {v:.4f}")
-                if ragas_overall.get("error"):
-                    lines.append(f"\n⚠️ RAGAS 错误: {ragas_overall['error']}")
+            gen_overall = summary.get("generation", {})
+            if gen_overall:
+                lines.append("### 生成指标总体均值")
+                for gm_key, scores_dict in gen_overall.items():
+                    if isinstance(scores_dict, dict):
+                        parts = ", ".join(
+                            f"{k}={v:.3f}" for k, v in scores_dict.items()
+                            if isinstance(v, (int, float))
+                        )
+                        if parts:
+                            lines.append(f"- **{gm_key}**: {parts}")
                 lines.append("")
 
         # 错误汇总
         errors = [r for r in results if r.error_message]
-        ragas_errors = [r for r in results if r.ragas_error]
-        if errors or ragas_errors:
+        judge_errors = [r for r in results if r.judge_error]
+        if errors or judge_errors:
             lines.append("## ⚠️ 错误汇总")
             if errors:
                 lines.append(f"- 主任务错误: {len(errors)} 个")
-            if ragas_errors:
-                lines.append(f"- RAGAS 评估错误: {len(ragas_errors)} 个")
+            if judge_errors:
+                lines.append(f"- LLM 指标评估错误: {len(judge_errors)} 个")
             lines.append("")
 
         return "\n".join(lines)

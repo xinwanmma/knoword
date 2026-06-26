@@ -69,15 +69,18 @@
             </el-checkbox-group>
           </el-form-item>
 
-          <el-form-item label="LLM-as-Judge">
-            <el-tag type="info">mimo-v2.5（固定）</el-tag>
-            <span style="margin-left: 10px; color: #999">不可修改</span>
-          </el-form-item>
-
-          <el-form-item label="RAGAS 评估">
-            <el-switch v-model="form.use_ragas" />
+          <el-form-item label="评估指标">
+            <el-tag type="info">5 检索 + 3 LLM（共 8 个，每次都跑，无开关）</el-tag>
             <span style="margin-left: 10px; color: #999">
-              run 完成后批量评估（更全面但更慢，可能需要 5-10 分钟）
+              检索：Recall@K / Precision@K / Hit@K / MRR / NDCG@K
+            </span>
+            <br>
+            <span style="margin-left: 0px; color: #999">
+              LLM：Faithfulness / Answer Relevancy / Answer Correctness
+            </span>
+            <br>
+            <span style="margin-left: 0px; color: #999">
+              LLM 评估模型：{{ mimoLiteModel }}（.env 中 MIMO_LITE_MODEL 可改）
             </span>
           </el-form-item>
 
@@ -166,20 +169,11 @@
           <li>Retrieval: {{ reportData.config.retrieval_strategies?.join(', ') }}</li>
           <li v-if="reportData.config.rerank_models?.length">Rerank: {{ reportData.config.rerank_models.join(', ') }}</li>
           <li>Generation: {{ reportData.config.generation_models?.join(', ') }}</li>
-          <li>LLM-as-Judge: mimo-v2.5（固定）</li>
-          <li>RAGAS: {{ reportData.config.use_ragas ? '✅ 启用' : '❌ 未启用' }}</li>
+          <li>LLM 评估模型: {{ reportData.config.llm_metric_model || mimoLiteModel }}</li>
+          <li>评估指标: 5 检索 + 3 LLM（共 8 个，每次都跑）</li>
         </ul>
         <h4>Summary</h4>
         <pre style="background: #f5f5f5; padding: 12px; border-radius: 4px; max-height: 400px; overflow: auto;">{{ JSON.stringify(reportData.summary, null, 2) }}</pre>
-
-        <!-- RAGAS 高亮 -->
-        <div v-if="reportData.summary?.ragas && typeof reportData.summary.ragas === 'object'">
-          <h4>RAGAS 总体均值</h4>
-          <el-table :data="ragasTableData" border size="small">
-            <el-table-column prop="name" label="指标" />
-            <el-table-column prop="value" label="分数" />
-          </el-table>
-        </div>
 
         <h4>报告文件</h4>
         <p>JSON: <code>{{ reportData.report_json_path }}</code></p>
@@ -237,8 +231,10 @@ const form = ref({
   retrieval_strategies: ['vector'],
   rerank_models: ['BAAI/bge-reranker-base'],
   generation_models: ['mimo-v2.5-pro'],
-  use_ragas: false,
 })
+
+// LLM 评估模型（默认 mimo-lite，可在 .env 中 MIMO_LITE_MODEL 修改）
+const mimoLiteModel = ref(import.meta.env.VITE_MIMO_LITE_MODEL || 'mimo-lite')
 
 const concurrencyMarks = { 1: '1', 2: '2', 4: '4', 6: '6', 8: '8' }
 const retrievalOptions = ['vector', 'bm25', 'rerank', 'graph']
@@ -266,23 +262,6 @@ const statusType = (s) => ({
   pending: 'info', running: 'warning', stopped: '',
   completed: 'success', failed: 'danger',
 }[s] || '')
-
-// RAGAS 指标名 → 友好显示
-const RAGAS_DISPLAY = {
-  faithfulness: 'Faithfulness（忠实度）',
-  answer_relevancy: 'Answer Relevancy（答案相关度）',
-  context_relevancy: 'Context Relevancy（上下文相关度）',
-  context_recall: 'Context Recall（上下文召回率）',
-  context_precision: 'Context Precision（上下文精度）',
-  answer_correctness: 'Answer Correctness（答案正确性）',
-}
-
-const ragasTableData = computed(() => {
-  if (!reportData.value?.summary?.ragas) return []
-  return Object.entries(reportData.value.summary.ragas)
-    .filter(([k, v]) => k !== 'error' && typeof v === 'number')
-    .map(([k, v]) => ({ name: RAGAS_DISPLAY[k] || k, value: v.toFixed(4) }))
-})
 
 onMounted(async () => {
   await loadModels()
@@ -351,7 +330,6 @@ const startRun = async () => {
       rerank_models: form.value.retrieval_strategies.includes('rerank') ? form.value.rerank_models : [],
       generation_models: form.value.generation_models,
       concurrency: form.value.concurrency,
-      use_ragas: form.value.use_ragas,
     })
     ElMessage.success('评估已启动')
     activeTab.value = 'history'
@@ -441,7 +419,6 @@ const resetForm = () => {
     retrieval_strategies: ['vector'],
     rerank_models: ['BAAI/bge-reranker-base'],
     generation_models: ['mimo-v2.5-pro'],
-    use_ragas: false,
   }
 }
 </script>

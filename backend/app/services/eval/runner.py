@@ -6,6 +6,14 @@
 3. **并行执行**：asyncio.Semaphore 控制并发（默认 4）
 4. **可取消**：用户停止时优雅退出，已完成结果全部保留
 5. **独立 session**：每个 task 独立 session，避免连接池耗尽
+
+评估指标（每次都默认跑，**无开关**）：
+- 检索指标（5 个，纯算法）：Recall@K / Precision@K / Hit@K / MRR / NDCG@K
+- LLM 指标（3 个，基于 LangChain）：
+  - Faithfulness / Groundedness（基于 retrieved contexts 验证）
+  - Answer Relevancy（LLM judge 0/0.5/1）
+  - Answer Correctness（F1 + embedding cos sim）
+- LLM 评估模型：settings.MIMO_LITE_MODEL（可在 .env 改）
 """
 import asyncio
 import logging
@@ -22,7 +30,7 @@ from app.db.database import async_session_factory
 from app.models.eval_models import EvaluationDataset, EvaluationResult, EvaluationRun
 from app.models.models import KnowledgeBase
 from app.services.embedding import get_embedding_provider
-from app.services.eval.judge import LLMJudge
+from app.services.eval.llm_metrics import compute_all_llm_metrics
 from app.services.eval.metrics import compute_retrieval_metrics
 from app.services.eval.report import ReportGenerator
 from app.services.llm_provider import get_llm_provider
@@ -35,12 +43,10 @@ logger = logging.getLogger(__name__)
 class EvalRunner:
     """评估运行器。"""
 
-    def __init__(self, run_id: uuid.UUID, use_ragas: bool = False):
+    def __init__(self, run_id: uuid.UUID):
         self.run_id = run_id
         self._stop_flag = asyncio.Event()
         self._semaphore = asyncio.Semaphore(settings.DEFAULT_EVAL_CONCURRENCY)
-        self._judge = LLMJudge()
-        self._use_ragas = use_ragas
 
     def request_stop(self):
         """用户点击「停止评估」时调用。"""
@@ -210,7 +216,7 @@ class EvalRunner:
                 await self._save_error_result(task, str(e))
 
     async def _run_single_task(self, task: dict) -> dict:
-        """执行单个 task：检索 → 生成 → Judge。"""
+        """执行单个 task：检索 → 5 检索指标 → 生成 → 3 LLM 指标。"""
         start = time.time()
 
         # 1. 检索（按 embedding_model + retrieval_strategy 路由）
@@ -240,17 +246,31 @@ class EvalRunner:
         response = await llm.ainvoke([{"role": "user", "content": prompt_text}])
         answer = response.content if hasattr(response, "content") else str(response)
 
-        # 3. Judge（固定 mimo-v2.5）
-        scores = await self._judge.score(
-            question=task["question"],
-            ground_truth=task["ground_truth"],
-            answer=answer,
-        )
-
-        # 4. 检索指标
+        # 3. 5 个标准检索指标（纯算法）
         ret_metrics = compute_retrieval_metrics(
             retrieved_ids, task.get("source_chunk_ids", []), k=5
         )
+
+        # 4. 3 个 LLM 指标（Faithfulness / Answer Relevancy / Answer Correctness）
+        #    用 LangChain RunnableParallel 风格并发跑，模型 = settings.MIMO_LITE_MODEL
+        try:
+            llm_scores = await compute_all_llm_metrics(
+                question=task["question"],
+                answer=answer,
+                contexts=[c.get("content", "") for c in chunks[:5]],
+                ground_truth=task.get("ground_truth", "") or "",
+            )
+            # llm_scores = {faithfulness, answer_relevancy, answer_correctness}
+            # 任一为 None → judge_error = True（复用旧字段避免改 schema）
+            judge_error = any(v is None for v in llm_scores.values())
+        except Exception as e:
+            logger.exception(f"LLM 指标评估失败: {e}")
+            llm_scores = {
+                "faithfulness": None,
+                "answer_relevancy": None,
+                "answer_correctness": None,
+            }
+            judge_error = True
 
         latency = int((time.time() - start) * 1000)
         return {
@@ -264,7 +284,8 @@ class EvalRunner:
             "retrieved_chunks": chunks[:5],
             "generated_answer": answer,
             "retrieval_metrics": ret_metrics,
-            "generation_scores": scores,
+            "generation_scores": llm_scores,
+            "judge_error": judge_error,
             "latency_ms": latency,
         }
 
@@ -306,16 +327,40 @@ class EvalRunner:
             )
             db.add(row)
             await db.commit()
+        # 错误 task 也算"完成"（便于进度准确），但 progress 不算它
+        await self._update_progress(is_error=True)
 
-    async def _update_progress(self):
+    async def _update_progress(self, is_error: bool = False):
+        """更新进度。completed_tasks 包含成功 + 错误。
+
+        progress 按 (total - error) / total 计算，
+        这样错误不影响"有效完成率"的显示。
+        """
         async with async_session_factory() as db:
             run = (await db.execute(
                 select(EvaluationRun).where(EvaluationRun.id == self.run_id)
             )).scalar_one()
-            run.completed_tasks = (run.completed_tasks or 0) + 1
-            run.progress = int(
-                run.completed_tasks / run.total_tasks * 100
-            ) if run.total_tasks else 0
+            # 直接从 results 表统计（更准，避免并发竞争）
+            from sqlalchemy import func as sa_func
+            total_in_db = (await db.execute(
+                select(sa_func.count(EvaluationResult.id))
+                .where(EvaluationResult.run_id == self.run_id)
+            )).scalar_one()
+            error_in_db = (await db.execute(
+                select(sa_func.count(EvaluationResult.id))
+                .where(
+                    EvaluationResult.run_id == self.run_id,
+                    EvaluationResult.error_message.isnot(None),
+                )
+            )).scalar_one()
+
+            run.completed_tasks = total_in_db
+            total = run.total_tasks or 0
+            if total > 0:
+                # progress 显示"有效成功率"
+                run.progress = int((total - error_in_db) / total * 100)
+            else:
+                run.progress = 0
             await db.commit()
 
     async def _mark_run_status(self, status: str, error: str | None = None):
@@ -341,32 +386,29 @@ class EvalRunner:
 
             # 汇总
             summary = self._aggregate(results)
-            summary["use_ragas"] = self._use_ragas
             run.summary = summary
-            run.status = "completed"
-            run.progress = 100
+
+            # 状态：区分 completed / completed_with_errors / failed
+            error_count = summary.get("error_count", 0)
+            total = run.total_tasks or len(results)
+            if total == 0:
+                run.status = "completed"
+                run.progress = 100
+            elif error_count == 0:
+                run.status = "completed"
+                run.progress = 100
+            elif error_count >= total:
+                run.status = "failed"
+                run.progress = 0
+            else:
+                run.status = "completed_with_errors"
+                run.progress = int((total - error_count) / total * 100)
+
+            run.completed_tasks = len(results)
             run.completed_at = datetime.now(timezone.utc)
             await db.commit()
 
-        # 2. 如果启用 RAGAS，批量回填（异步，不阻塞报告生成）
-        if self._use_ragas:
-            try:
-                from app.services.eval.ragas_eval import RagasEvaluator
-                evaluator = RagasEvaluator()
-                ragas_summary = await evaluator.score_run(self.run_id)
-                # 把 RAGAS 汇总写回 run.summary
-                async with async_session_factory() as db:
-                    run = (await db.execute(
-                        select(EvaluationRun).where(EvaluationRun.id == self.run_id)
-                    )).scalar_one()
-                    if run.summary is None:
-                        run.summary = {}
-                    run.summary["ragas"] = ragas_summary
-                    await db.commit()
-            except Exception as e:
-                logger.exception(f"RAGAS 回填失败: {e}")
-
-        # 3. 生成报告文件（永久保留）
+        # 2. 生成报告文件（永久保留）
         try:
             await ReportGenerator(self.run_id).generate()
         except Exception as e:
@@ -376,9 +418,19 @@ class EvalRunner:
     def _aggregate(results: list) -> dict:
         """汇总所有 result → summary 指标。
 
-        健壮性：使用 safe_avg + dict.get()，避免个别 result 字段缺失导致 KeyError。
+        新指标结构（无 use_ragas 开关，每次都跑）：
+        - retrieval.{embedding|retrieval|rerank}.{recall_at_5, precision_at_5, hit_at_5, mrr, ndcg_at_5}
+        - generation.{model}.{faithfulness, answer_relevancy, answer_correctness}
+
+        健壮性：safe_avg() 跳过非数字，缺 key 兜底为 0，避免 KeyError。
         """
-        STANDARD_GEN_KEYS = ("faithfulness", "relevance", "completeness")
+        # 5 个标准检索指标 + 3 个 LLM 指标（顺序固定）
+        STANDARD_RET_KEYS = (
+            "recall_at_k", "precision_at_k", "hit_at_k", "mrr", "ndcg_at_k",
+        )
+        STANDARD_GEN_KEYS = (
+            "faithfulness", "answer_relevancy", "answer_correctness",
+        )
 
         def safe_avg(values, default=0.0):
             """对一组值求平均，跳过非数字，缺值兜底为 0。"""
@@ -394,12 +446,12 @@ class EvalRunner:
             if r.generation_scores and not r.judge_error and not r.error_message:
                 gen_scores_grouped[r.generation_model].append(r.generation_scores)
 
-        # retrieval: 以该 group 第一个 result 的 keys 为基准（兼容老格式）
+        # retrieval: 硬编码 5 个标准 key（统一口径，避免不同 result 字段不同）
         ret_summary = {
-            key: {k: safe_avg([m.get(k) for m in metrics]) for k in (metrics[0] or {})}
+            key: {k: safe_avg([m.get(k) for m in metrics]) for k in STANDARD_RET_KEYS}
             for key, metrics in ret_metrics_grouped.items()
         }
-        # generation: 硬编码标准 3 个 key，避免依赖 scores[0]
+        # generation: 硬编码 3 个标准 key
         gen_summary = {
             key: {k: safe_avg([s.get(k) for s in scores]) for k in STANDARD_GEN_KEYS}
             for key, scores in gen_scores_grouped.items()
@@ -408,7 +460,19 @@ class EvalRunner:
             "retrieval": ret_summary,
             "generation": gen_summary,
             "total_results": len(results),
+            "success_count": sum(1 for r in results if not r.error_message),
             "error_count": sum(1 for r in results if r.error_message),
+            "error_tasks": [
+                {
+                    "qa_index": r.qa_index,
+                    "embedding_model": r.embedding_model,
+                    "retrieval_strategy": r.retrieval_strategy,
+                    "rerank_model": r.rerank_model,
+                    "generation_model": r.generation_model,
+                    "error": r.error_message[:200] if r.error_message else None,
+                }
+                for r in results if r.error_message
+            ],
             "judge_error_count": sum(1 for r in results if r.judge_error),
         }
 
@@ -417,9 +481,9 @@ class EvalRunner:
 _runners: dict[uuid.UUID, EvalRunner] = {}
 
 
-def get_or_create_runner(run_id: uuid.UUID, use_ragas: bool = False) -> EvalRunner:
+def get_or_create_runner(run_id: uuid.UUID) -> EvalRunner:
     if run_id not in _runners:
-        _runners[run_id] = EvalRunner(run_id, use_ragas=use_ragas)
+        _runners[run_id] = EvalRunner(run_id)
     return _runners[run_id]
 
 
