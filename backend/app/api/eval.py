@@ -15,7 +15,7 @@ from app.models.eval_models import EvaluationDataset, EvaluationResult, Evaluati
 from app.models.models import User
 from app.schemas.eval_schemas import (
     DatasetCreate, DatasetDetailOut, DatasetOut, EvalResultOut,
-    EvalRunCreate, EvalRunOut, EvalRunProgress,
+    EvalRunCreate, EvalRunOut, EvalRunProgress, EVAL_METRIC_KEYS,
 )
 from app.services.eval import (
     EvalRunner, GoldenDatasetBuilder, ReportGenerator, get_or_create_runner, remove_runner,
