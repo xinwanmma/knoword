@@ -128,6 +128,11 @@ class ReportGenerator:
         lines.append(f"- **续跑次数**: {run.resume_count}")
         lines.append("")
 
+        def safe_avg(values, default=0.0):
+            """过滤非数字后求平均；全 None 兜底为 0。"""
+            vals = [v for v in values if isinstance(v, (int, float))]
+            return sum(vals) / len(vals) if vals else default
+
         # 配置
         cfg = run.config or {}
         lines.append("## 配置")
@@ -153,8 +158,12 @@ class ReportGenerator:
                 key = (r.embedding_model, r.retrieval_strategy, r.rerank_model or "-")
                 grouped[key].append(r.retrieval_metrics)
             for (emb, ret, rm), metrics_list in sorted(grouped.items()):
-                avg = {k: sum(m[k] for m in metrics_list) / len(metrics_list)
-                       for k in metrics_list[0]}
+                # 修复：用并集作 base_keys（单个 result 字段缺失不影响整体），
+                # safe_avg + dict.get() 避免 KeyError
+                base_keys = set()
+                for m in metrics_list:
+                    base_keys.update((m or {}).keys())
+                avg = {k: safe_avg([m.get(k) for m in metrics_list]) for k in base_keys}
                 lines.append(
                     f"| {emb} | {ret} | {rm} | {avg.get('hit_at_5', 0):.3f} | "
                     f"{avg.get('mrr', 0):.3f} | {avg.get('ndcg_at_5', 0):.3f} | "
@@ -172,11 +181,10 @@ class ReportGenerator:
             grouped = defaultdict(list)
             for r in gen_results:
                 grouped[r.generation_model].append(r.generation_scores)
+            STANDARD_GEN_KEYS = ("faithfulness", "relevance", "completeness")
             for gm, scores_list in sorted(grouped.items()):
-                avg = {
-                    k: sum(s[k] for s in scores_list) / len(scores_list)
-                    for k in scores_list[0] if k in ("faithfulness", "relevance", "completeness")
-                }
+                # 修复：硬编码 3 个标准 key，缺 key 的 result 该维度被跳过
+                avg = {k: safe_avg([s.get(k) for s in scores_list]) for k in STANDARD_GEN_KEYS}
                 lines.append(
                     f"| {gm} | {avg.get('faithfulness', 0):.2f} | "
                     f"{avg.get('relevance', 0):.2f} | {avg.get('completeness', 0):.2f} |"
