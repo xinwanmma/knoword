@@ -173,6 +173,8 @@ cd backend
 pytest tests/test_auth.py -v
 ```
 
+> 测试用 `sqlite+aiosqlite:///./test.db`（由 `tests/conftest.py` 自动设置），`database.py` 会按 URL 自动选择引擎配置（SQLite 走 NullPool，不接 pool_size 等 PG 专用参数）。生产 PostgreSQL 走原连接池配置。
+
 ## 📈 评估中心使用
 
 1. 进入「评估中心」→ 创建数据集（自动从 KB 生成 QA 对，或手动导入）
