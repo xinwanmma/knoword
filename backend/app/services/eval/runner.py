@@ -20,6 +20,7 @@ from sqlalchemy import select
 from app.config import settings
 from app.db.database import async_session_factory
 from app.models.eval_models import EvaluationDataset, EvaluationResult, EvaluationRun
+from app.models.models import KnowledgeBase
 from app.services.embedding import get_embedding_provider
 from app.services.eval.judge import LLMJudge
 from app.services.eval.metrics import compute_retrieval_metrics
@@ -66,8 +67,24 @@ class EvalRunner:
                 select(EvaluationDataset).where(EvaluationDataset.id == run.dataset_id)
             )).scalar_one()
 
-        # 2. 展开 task
-        all_tasks = self._expand_tasks(dataset.qa_pairs, run.config)
+        # 1.5 获取 KB 绑定的 embedding model（物理上不能换）
+        # ChromaDB collection 维度在 document 写入时已锁定，
+        # 评估检索必须用 KB 绑定的 embedding model，否则 dimension mismatch
+        kb_embedding_model = await self._get_kb_embedding_model(dataset.kb_id)
+        requested_embedding_models = (run.config or {}).get("embedding_models", [])
+        if (kb_embedding_model
+                and requested_embedding_models
+                and kb_embedding_model not in requested_embedding_models):
+            logger.warning(
+                f"评估请求的 embedding_models={requested_embedding_models}，"
+                f"但 KB {dataset.kb_id} 绑定的是 {kb_embedding_model}。"
+                f"将强制使用 KB 绑定的 embedding（ChromaDB collection 维度已锁定）。"
+            )
+
+        # 2. 展开 task（用 KB 绑定的 embedding model）
+        all_tasks = self._expand_tasks(
+            dataset.qa_pairs, run.config, kb_embedding_model
+        )
         async with async_session_factory() as db:
             run = (await db.execute(
                 select(EvaluationRun).where(EvaluationRun.id == self.run_id)
@@ -99,12 +116,20 @@ class EvalRunner:
         # 6. 汇总 + 生成报告
         await self._finalize_run()
 
-    def _expand_tasks(self, qa_pairs: list, config: dict) -> list[dict]:
-        """展开笛卡尔积：每个 (qa × embedding × retrieval × rerank × generation) 一个 task。"""
-        embed_models = config.get("embedding_models", [])
+    def _expand_tasks(
+        self, qa_pairs: list, config: dict, kb_embedding_model: str | None = None
+    ) -> list[dict]:
+        """展开笛卡尔积：每个 (qa × embedding × retrieval × rerank × generation) 一个 task。
+
+        关键：embedding_models 被强制替换为 [kb_embedding_model]（ChromaDB 维度已锁），
+        用户请求的列表保留在 config.requested_embedding_models 里给报告参考。
+        """
         retrievals = config.get("retrieval_strategies", [])
         generations = config.get("generation_models", [])
         rerank_models = config.get("rerank_models", [])
+
+        # 强制用 KB 绑定的 embedding model（兜底用 settings 默认值）
+        embed_models = [kb_embedding_model or settings.OLLAMA_EMBED_MODEL]
 
         tasks = []
         for qa_idx, qa in enumerate(qa_pairs):
@@ -138,6 +163,14 @@ class EvalRunner:
                                 "generation_model": gm,
                             })
         return tasks
+
+    async def _get_kb_embedding_model(self, kb_id: int) -> str | None:
+        """读 KB 绑定的 embedding model。"""
+        async with async_session_factory() as db:
+            kb = (await db.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
+            )).scalar_one_or_none()
+            return kb.embedding_model if kb else None
 
     @staticmethod
     def _task_key(t: dict) -> str:
