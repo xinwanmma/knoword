@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Type
 
 from app.services.retrieval.base import RetrievalStrategy
-from app.services.retrieval.bm25_retrieval import BM25Retrieval
+from app.services.retrieval.hybrid_retrieval import HybridRetrieval
 from app.services.retrieval.rerank_retrieval import RerankRetrieval
 from app.services.retrieval.vector_retrieval import VectorRetrieval
 
@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 RETRIEVAL_REGISTRY: Dict[str, Type[RetrievalStrategy]] = {
     "vector": VectorRetrieval,
-    "bm25": BM25Retrieval,
-    "rerank": RerankRetrieval,
+    "hybrid": HybridRetrieval,        # vector + BM25 加权融合
+    "rerank": RerankRetrieval,        # vector 初筛 + Rerank 重排
 }
 
 
@@ -33,8 +33,14 @@ def get_retrieval_strategy(
             rerank_model=rerank_model,
             rerank_top_n=rerank_top_n,
         )
-    elif strategy == "bm25":
-        return BM25Retrieval()
+    elif strategy == "hybrid":
+        # Hybrid Fusion: vector + BM25 加权融合（alpha=0.5 平衡）
+        return HybridRetrieval(
+            embedding_model=embedding_model,
+            alpha=0.5,
+            top_n_vec=rerank_top_n,    # 复用 rerank_top_n 作为候选数（默认 20）
+            top_n_bm25=rerank_top_n,
+        )
     else:
         return VectorRetrieval(embedding_model=embedding_model)
 

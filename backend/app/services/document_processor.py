@@ -12,6 +12,7 @@ from app.services.parser import parse_document
 from app.services.chunking import get_chunker
 from app.services.embedding import get_embedding_provider
 from app.services.vectorstore import add_documents, delete_by_doc_id
+from app.services.retrieval.hybrid_retrieval import invalidate_index as invalidate_bm25_index
 
 logger = logging.getLogger(__name__)
 

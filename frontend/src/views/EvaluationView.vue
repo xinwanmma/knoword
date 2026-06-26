@@ -49,7 +49,9 @@
 
           <el-form-item label="Retrieval 策略">
             <el-checkbox-group v-model="form.retrieval_strategies" @change="onRetrievalChange">
-              <el-checkbox v-for="s in retrievalOptions" :key="s" :label="s">{{ s }}</el-checkbox>
+              <el-checkbox v-for="s in retrievalOptions" :key="s.key" :label="s.key">
+                {{ s.label }}
+              </el-checkbox>
             </el-checkbox-group>
           </el-form-item>
 
@@ -213,7 +215,7 @@
         <h4>配置</h4>
         <ul>
           <li>Embedding: {{ reportData.config.embedding_models?.join(', ') }}</li>
-          <li>Retrieval: {{ reportData.config.retrieval_strategies?.join(', ') }}</li>
+          <li>Retrieval: {{ reportEnabledRetrievalLabels }}</li>
           <li v-if="reportData.config.rerank_models?.length">Rerank: {{ reportData.config.rerank_models.join(', ') }}</li>
           <li>Generation: {{ reportData.config.generation_models?.join(', ') }}</li>
           <li>LLM 评估模型: {{ reportData.config.llm_metric_model || 'mimo-v2.5' }}</li>
@@ -318,7 +320,15 @@ const selectNoMetrics = () => { form.value.enabled_metrics = [] }
 const resetToDefaultMetrics = () => { form.value.enabled_metrics = [...ALL_METRIC_KEYS] }
 
 const concurrencyMarks = { 1: '1', 2: '2', 4: '4', 6: '6', 8: '8' }
-const retrievalOptions = ['vector', 'bm25', 'rerank']
+// 检索策略选项：key 给后端，label 给 UI
+//   "vector" → "Vector（向量检索）"
+//   "hybrid" → "Hybrid Fusion（混合检索 · vector + BM25 加权融合）"
+//   "rerank" → "Vector 初筛 + Rerank 重排"
+const retrievalOptions = [
+  { key: 'vector', label: 'Vector（向量检索）' },
+  { key: 'hybrid', label: 'Hybrid Fusion（混合检索 · vector + BM25 加权融合）' },
+  { key: 'rerank', label: 'Vector 初筛 + Rerank 重排' },
+]
 
 // Dataset form
 const showCreateDataset = ref(false)
@@ -441,6 +451,24 @@ const resumeRun = async (row) => {
 
 const reportDialog = ref(false)
 const reportData = ref(null)
+
+// 报告弹窗：实际启用的指标（从 run.config.enabled_metrics 读）
+// 老 run 没字段 → 默认全开
+const reportEnabledKeys = computed(() => {
+  const v = reportData.value?.config?.enabled_metrics
+  if (Array.isArray(v) && v.length) return v
+  return [...ALL_METRIC_KEYS]
+})
+const reportEnabledLabels = computed(() =>
+  reportEnabledKeys.value.map(k => METRIC_LABELS[k] || k).join(', ')
+)
+const reportEnabledCount = computed(() => reportEnabledKeys.value.length)
+
+// 报告弹窗：把 retrieval strategy key 翻译成 UI label
+const reportEnabledRetrievalLabels = computed(() => {
+  const keys = reportData.value?.config?.retrieval_strategies || []
+  return keys.map(k => retrievalOptions.find(o => o.key === k)?.label || k).join(', ')
+})
 
 const viewReport = async (row) => {
   const { data } = await evalAPI.getRun(row.id)
