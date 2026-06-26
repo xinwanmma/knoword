@@ -93,6 +93,7 @@ async def process_document(doc_id: int, file_path: str):
                 documents.append(text)
                 embeddings.append(embedding)
                 metadatas.append({
+                    "chunk_id": vector_id,  # 跟 id 保持一致，供检索时用
                     "kb_id": doc.kb_id,
                     "doc_id": doc.id,
                     "chunk_index": i,
