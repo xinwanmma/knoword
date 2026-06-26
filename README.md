@@ -25,7 +25,7 @@
 | LLM | **Answer Correctness** | 0.5×F1 + 0.5×embedding cos sim |
 
 > 8 个指标可独立开关；默认全开，关闭后该指标不计入 summary / 报告。
-> LLM 评估模型默认 `settings.MIMO_MODEL`（即 `mimo-v2.5-pro`），UI 启动时可改为 `mimo-v2.5` / `mimo-lite` / 其它。
+> LLM 评估模型默认 `settings.MIMO_MODEL`（即 `mimo-v2.5-pro`），UI 启动时可改为 `mimo-v2.5` / 其它（手输任意模型名）。
 
 ## 🏗️ 技术栈
 
@@ -179,10 +179,14 @@ pytest tests/test_auth.py -v
 ## 📈 评估中心使用
 
 1. 进入「评估中心」→ 创建数据集（自动从 KB 生成 QA 对，或手动导入）
-2. 配置评估组合：embedding × retrieval × rerank × generation（笛卡尔积）
-3. （可选）勾选/取消评估指标，配置 LLM 评估模型 — 默认全开 8 个 + `mimo-v2.5`
-4. 启动评估，自动跑启用的指标
-5. 查看报告（`backend/reports/eval_*.json` + `*.md`）
+2. **多选知识库**（1+ 个）— 每个 KB 用自己创建时锁定的 embedding 模型；选多个 KB 自动按 embedding 模型对比检索质量
+3. 配置评估组合：`kb_ids × retrieval × rerank × generation`（笛卡尔积）
+4. （可选）勾选/取消评估指标，配置 LLM 评估模型 — 默认全开 8 个 + `mimo-v2.5`
+5. 启动评估，自动跑启用的指标
+6. 查看报告（`backend/reports/eval_*.json` + `*.md`）
+
+> **多 KB 对比原理**：将同一份文档用不同 embedding 模型构建成不同 KB（同名不同 KB），评估时一次性选多个 KB，后端按 KB 拆分 task 跑笛卡尔积。报告按 `embedding_model` 自然分组，可直接对比不同 embedding 的检索质量。
+> **Embedding 模型选择已下放给 KB**：前端不再提供 embedding 多选下拉，因为评估时强制使用 KB 创建时锁定的 embedding（修改 KB embedding 需要重建文档）。
 
 详细算法见 `backend/app/services/eval/metrics.py`（检索）和 `llm_metrics.py`（LLM）。
 

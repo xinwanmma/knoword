@@ -12,7 +12,7 @@ from app.config import settings
 from app.core.security import get_current_user, require_admin
 from app.db.database import async_session_factory, get_db
 from app.models.eval_models import EvaluationDataset, EvaluationResult, EvaluationRun
-from app.models.models import User
+from app.models.models import KnowledgeBase, User
 from app.schemas.eval_schemas import (
     DatasetCreate, DatasetDetailOut, DatasetOut, EvalResultOut,
     EvalRunCreate, EvalRunOut, EvalRunProgress, EVAL_METRIC_KEYS,
@@ -164,8 +164,38 @@ async def create_run(
     )
     # llm_metric_model: None → settings.MIMO_MODEL
     llm_metric_model = (req.llm_metric_model or "").strip() or settings.MIMO_MODEL
+
+    # 解析 kb_ids：前端可能只传 embedding_models（老接口），需把同名 KB 自动匹配进来
+    kb_ids: list[int] = []
+    if req.kb_ids:
+        kb_ids = list(req.kb_ids)
+    elif req.embedding_models:
+        # 兼容：把 embedding_models 当 KB 名字搜索（kb.name 在表里）
+        # 实际生产建议前端传 kb_ids；此处兜底让老前端还能跑
+        names = req.embedding_models
+        kb_query = select(KnowledgeBase).where(KnowledgeBase.name.in_(names))
+        kb_rows = (await db.execute(kb_query)).scalars().all()
+        kb_ids = [k.id for k in kb_rows]
+    # 兜底：dataset 绑定的 KB
+    if not kb_ids and dataset.kb_id:
+        kb_ids = [dataset.kb_id]
+
+    # 收集本次评估涉及 KB 的实际 embedding model（落库只用于报告展示）
+    embedding_models_in_use: list[str] = []
+    if kb_ids:
+        kb_query2 = select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids))
+        kb_rows2 = (await db.execute(kb_query2)).scalars().all()
+        # 按 kb_ids 顺序去重
+        seen = set()
+        for kid in kb_ids:
+            kb_obj = next((k for k in kb_rows2 if k.id == kid), None)
+            if kb_obj and kb_obj.embedding_model and kb_obj.embedding_model not in seen:
+                seen.add(kb_obj.embedding_model)
+                embedding_models_in_use.append(kb_obj.embedding_model)
+
     config = {
-        "embedding_models": req.embedding_models,
+        "kb_ids": kb_ids,                        # 新字段：评估检索的 KB 列表（多选 = 多模型对比）
+        "embedding_models": embedding_models_in_use,  # 派生：每个 KB 的 embedding model（仅展示）
         "retrieval_strategies": req.retrieval_strategies,
         "rerank_models": req.rerank_models,
         "generation_models": req.generation_models,

@@ -98,23 +98,19 @@ class EvalRunner:
             f"llm_metric_model={self._llm_metric_model}"
         )
 
-        # 1.5 获取 KB 绑定的 embedding model（物理上不能换）
-        # ChromaDB collection 维度在 document 写入时已锁定，
-        # 评估检索必须用 KB 绑定的 embedding model，否则 dimension mismatch
-        kb_embedding_model = await self._get_kb_embedding_model(dataset.kb_id)
-        requested_embedding_models = (run.config or {}).get("embedding_models", [])
-        if (kb_embedding_model
-                and requested_embedding_models
-                and kb_embedding_model not in requested_embedding_models):
-            logger.warning(
-                f"评估请求的 embedding_models={requested_embedding_models}，"
-                f"但 KB {dataset.kb_id} 绑定的是 {kb_embedding_model}。"
-                f"将强制使用 KB 绑定的 embedding（ChromaDB collection 维度已锁定）。"
-            )
+        # 1.5 获取本次评估所有 KB 绑定的 embedding model（多 KB 对比）
+        # 物理上 KB 用什么 embedding 就用什么，不能跨 KB 切换
+        cfg = run.config or {}
+        kb_ids_for_run = cfg.get("kb_ids") or [dataset.kb_id]
+        kb_infos = await self._get_kbs_info(kb_ids_for_run)
+        logger.info(
+            f"EvalRun {self.run_id}: kb_ids={kb_ids_for_run} → "
+            f"embedding_models={[em for _, em in kb_infos]}"
+        )
 
-        # 2. 展开 task（用 KB 绑定的 embedding model）
+        # 2. 展开 task（按 (kb_id, retrieval, rerank, generation) 笛卡尔积）
         all_tasks = self._expand_tasks(
-            dataset.qa_pairs, run.config, kb_embedding_model
+            dataset.qa_pairs, run.config, kb_infos
         )
         async with async_session_factory() as db:
             run = (await db.execute(
@@ -148,23 +144,23 @@ class EvalRunner:
         await self._finalize_run()
 
     def _expand_tasks(
-        self, qa_pairs: list, config: dict, kb_embedding_model: str | None = None
+        self, qa_pairs: list, config: dict, kb_infos: list[tuple[int, str | None]]
     ) -> list[dict]:
-        """展开笛卡尔积：每个 (qa × embedding × retrieval × rerank × generation) 一个 task。
+        """展开笛卡尔积：每个 (qa × kb × retrieval × rerank × generation) 一个 task。
 
-        关键：embedding_models 被强制替换为 [kb_embedding_model]（ChromaDB 维度已锁），
-        用户请求的列表保留在 config.requested_embedding_models 里给报告参考。
+        kb_infos: [(kb_id, embedding_model), ...] —— 每个 KB 用自己的 embedding model
+        多 KB 时（不同 embedding 模型对比）= 每个 KB 各产一组 task，summary 自动按 embedding_model 分组对比
         """
         retrievals = config.get("retrieval_strategies", [])
         generations = config.get("generation_models", [])
         rerank_models = config.get("rerank_models", [])
-
-        # 强制用 KB 绑定的 embedding model（兜底用 settings 默认值）
-        embed_models = [kb_embedding_model or settings.OLLAMA_EMBED_MODEL]
+        # 兜底：如果 kb_infos 为空，用 dataset.kb_id（但 KB 不存在 → embedding 拿不到）
+        if not kb_infos:
+            return []
 
         tasks = []
         for qa_idx, qa in enumerate(qa_pairs):
-            for em in embed_models:
+            for kb_id, em in kb_infos:
                 for rt in retrievals:
                     if rt == "rerank" and rerank_models:
                         for rm in rerank_models:
@@ -175,7 +171,8 @@ class EvalRunner:
                                     "ground_truth": qa["ground_truth"],
                                     "source_chunk_ids": qa.get("source_chunk_ids", []),
                                     "source_doc_ids": qa.get("source_doc_ids", []),
-                                    "embedding_model": em,
+                                    "kb_id": kb_id,
+                                    "embedding_model": em or settings.OLLAMA_EMBED_MODEL,
                                     "retrieval_strategy": rt,
                                     "rerank_model": rm,
                                     "generation_model": gm,
@@ -188,15 +185,33 @@ class EvalRunner:
                                 "ground_truth": qa["ground_truth"],
                                 "source_chunk_ids": qa.get("source_chunk_ids", []),
                                 "source_doc_ids": qa.get("source_doc_ids", []),
-                                "embedding_model": em,
+                                "kb_id": kb_id,
+                                "embedding_model": em or settings.OLLAMA_EMBED_MODEL,
                                 "retrieval_strategy": rt,
                                 "rerank_model": None,
                                 "generation_model": gm,
                             })
         return tasks
 
+    async def _get_kbs_info(self, kb_ids: list[int]) -> list[tuple[int, str | None]]:
+        """读多个 KB 的 (id, embedding_model) 列表。用于多 KB 对比。
+
+        返回 [(kb_id, embedding_model), ...] —— 顺序与 kb_ids 一致。
+        """
+        if not kb_ids:
+            return []
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids))
+            )).scalars().all()
+            by_id = {k.id: k for k in rows}
+            return [
+                (kid, by_id[kid].embedding_model if kid in by_id else None)
+                for kid in kb_ids
+            ]
+
     async def _get_kb_embedding_model(self, kb_id: int) -> str | None:
-        """读 KB 绑定的 embedding model。"""
+        """[已废弃] 保留兼容：读单个 KB 的 embedding model。"""
         async with async_session_factory() as db:
             kb = (await db.execute(
                 select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
@@ -245,6 +260,7 @@ class EvalRunner:
 
         启用的指标：self._enabled_metrics（来自 run.config）
         LLM 评估模型：self._llm_metric_model
+        每个 task 关联一个 kb_id（多 KB 对比：每 KB 独立 task）
         """
         start = time.time()
 
@@ -254,13 +270,13 @@ class EvalRunner:
             embedding_model=task["embedding_model"],
             rerank_model=task.get("rerank_model"),
         )
-        # KB IDs：默认用配置中的所有 KB（评估时简化处理：检索整个数据集 KB）
-        kb_ids = await self._get_kb_ids_for_task(task)
+        # KB IDs：本 task 关联的 kb_id（_expand_tasks 已按 KB 拆分 task）
+        kb_ids = [task["kb_id"]]
         chunks = await strategy.retrieve(
             query=task["question"],
             kb_ids=kb_ids,
             top_k=5,
-            search_all=not kb_ids,
+            search_all=False,  # 多 KB 对比时不能用 search_all，否则跨 KB
         )
         retrieved_ids = [c.get("chunk_id", "") for c in chunks]
 
@@ -324,7 +340,14 @@ class EvalRunner:
         }
 
     async def _get_kb_ids_for_task(self, task: dict) -> List[int]:
-        """评估时获取 run 关联的 KB 列表。"""
+        """[已废弃] 评估时获取 run 关联的 KB 列表。
+
+        现在 _run_single_task 直接从 task['kb_id'] 取（_expand_tasks 已按 KB 拆分 task），
+        本方法仅保留兼容（旧代码可能还在用）。
+        """
+        if task.get("kb_id"):
+            return [task["kb_id"]]
+        # 兜底：走 dataset 绑定的 KB（极少用到，task 一般有 kb_id）
         async with async_session_factory() as db:
             run = (await db.execute(
                 select(EvaluationRun).where(EvaluationRun.id == self.run_id)
