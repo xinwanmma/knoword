@@ -341,7 +341,17 @@ class EvalRunner:
 
     @staticmethod
     def _aggregate(results: list) -> dict:
-        """汇总所有 result → summary 指标。"""
+        """汇总所有 result → summary 指标。
+
+        健壮性：使用 safe_avg + dict.get()，避免个别 result 字段缺失导致 KeyError。
+        """
+        STANDARD_GEN_KEYS = ("faithfulness", "relevance", "completeness")
+
+        def safe_avg(values, default=0.0):
+            """对一组值求平均，跳过非数字，缺值兜底为 0。"""
+            vals = [v for v in values if isinstance(v, (int, float))]
+            return sum(vals) / len(vals) if vals else default
+
         ret_metrics_grouped = defaultdict(list)
         gen_scores_grouped = defaultdict(list)
         for r in results:
@@ -351,13 +361,14 @@ class EvalRunner:
             if r.generation_scores and not r.judge_error and not r.error_message:
                 gen_scores_grouped[r.generation_model].append(r.generation_scores)
 
+        # retrieval: 以该 group 第一个 result 的 keys 为基准（兼容老格式）
         ret_summary = {
-            key: {k: sum(m[k] for m in metrics) / len(metrics) for k in metrics[0]}
+            key: {k: safe_avg([m.get(k) for m in metrics]) for k in (metrics[0] or {})}
             for key, metrics in ret_metrics_grouped.items()
         }
+        # generation: 硬编码标准 3 个 key，避免依赖 scores[0]
         gen_summary = {
-            key: {k: sum(s[k] for s in scores) / len(scores)
-                  for k in scores[0] if k in ("faithfulness", "relevance", "completeness")}
+            key: {k: safe_avg([s.get(k) for s in scores]) for k in STANDARD_GEN_KEYS}
             for key, scores in gen_scores_grouped.items()
         }
         return {
