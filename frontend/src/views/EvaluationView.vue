@@ -309,8 +309,8 @@ const form = ref({
   llm_metric_model: 'mimo-v2.5',
 })
 
-// LLM 评估模型下拉选项（用户可手输）
-const llmMetricModelOptions = ['mimo-v2.5', 'mimo-v2.5-pro', 'mimo-lite']
+// LLM 评估模型下拉选项（用户可手输任意名字；'mimo-lite' 已废弃，下拉不再提供）
+const llmMetricModelOptions = ['mimo-v2.5', 'mimo-v2.5-pro']
 
 const canToggleMetrics = computed(() => !starting.value)
 const selectAllMetrics = () => { form.value.enabled_metrics = [...ALL_METRIC_KEYS] }
@@ -412,6 +412,9 @@ const startRun = async () => {
       rerank_models: form.value.retrieval_strategies.includes('rerank') ? form.value.rerank_models : [],
       generation_models: form.value.generation_models,
       concurrency: form.value.concurrency,
+      // 关键：这两个字段上轮 commit 漏了，导致 judge LLM 兜底走 settings.MIMO_MODEL
+      enabled_metrics: form.value.enabled_metrics,
+      llm_metric_model: form.value.llm_metric_model || null,
     })
     ElMessage.success('评估已启动')
     activeTab.value = 'history'

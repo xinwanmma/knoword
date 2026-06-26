@@ -112,6 +112,10 @@ async def process_document(doc_id: int, file_path: str):
             doc.error = None
             await db.commit()
             logger.info(f"[doc_{doc_id}] 处理完成: {len(chunk_texts)} 个 chunk 已向量化")
+            # 文档处理完成（chunk_id / content 已写入）→ 失效 BM25 缓存
+            # 否则 BM25 索引里的 chunk_id 会过期，导致评估永远召回 0
+            invalidate_bm25_index(doc.kb_id)
+            logger.info(f"[doc_{doc_id}] 已失效 BM25 索引 (kb_id={doc.kb_id})")
 
         except Exception as e:
             logger.error(f"[doc_{doc_id}] 处理失败: {e}", exc_info=True)
