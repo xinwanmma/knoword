@@ -216,12 +216,11 @@ def check_frontend_deps() -> None:
 def start_in_new_window(title: str, cmd_str: str, cwd: Path) -> None:
     """在新命令行窗口中运行命令（仅 Windows）。"""
     if sys.platform == "win32":
-        # /c start 标题 cmd /k 命令
-        subprocess.Popen(
-            ["cmd", "/c", "start", f'"{title}"', "cmd", "/k", cmd_str],
-            cwd=str(cwd),
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
-        )
+        # 用 shell=True + 字符串，让 cmd 自己解析 start 的 title 引号规则
+        # 注意：cmd_str 需要自己加双引号以防路径含空格
+        # 不需要 CREATE_NEW_CONSOLE —— start 命令本身就会开新窗口
+        full = f'start "{title}" cmd /k "{cmd_str}"'
+        subprocess.Popen(full, cwd=str(cwd), shell=True)
     elif sys.platform == "darwin":
         # macOS：用 osascript 打开 Terminal.app 新窗口
         script = f'tell application "Terminal" to do script "cd \\"{cwd}\\" && {cmd_str}"'
