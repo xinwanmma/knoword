@@ -72,18 +72,13 @@
           <el-select v-model="kbForm.embedding_model" style="width: 100%" @change="onEmbeddingChange">
             <el-option-group label="Ollama（本地）">
               <el-option label="qwen3-embedding:0.6b（推荐）" value="qwen3-embedding:0.6b" />
-              <el-option label="nomic-embed-text" value="nomic-embed-text" />
-              <el-option label="mxbai-embed-large" value="mxbai-embed-large" />
             </el-option-group>
             <el-option-group label="HuggingFace（本地离线）">
               <el-option label="shibing624/text2vec-base-chinese" value="shibing624/text2vec-base-chinese" />
-              <el-option label="BAAI/bge-small-zh-v1.5" value="BAAI/bge-small-zh-v1.5" />
-              <el-option label="BAAI/bge-base-zh-v1.5" value="BAAI/bge-base-zh-v1.5" />
             </el-option-group>
             <el-option-group label="SiliconFlow（云端 API，需 Key）">
               <el-option label="Qwen/Qwen3-Embedding-4B" value="Qwen/Qwen3-Embedding-4B" />
               <el-option label="Qwen/Qwen3-Embedding-8B" value="Qwen/Qwen3-Embedding-8B" />
-              <el-option label="BAAI/bge-m3" value="BAAI/bge-m3" />
             </el-option-group>
           </el-select>
         </el-form-item>
