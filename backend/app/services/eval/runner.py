@@ -246,13 +246,23 @@ class EvalRunner:
                 await self._save_error_result(task, str(e))
 
     async def _run_single_task(self, task: dict) -> dict:
-        """执行单个 task：检索 → 5 检索指标 → 生成 → 3 LLM 指标。
+        """执行单个 task：检索 → 5 检索指标 → （可选）生成 → （可选）3 LLM 指标。
 
         启用的指标：self._enabled_metrics（来自 run.config）
         LLM 评估模型：self._llm_metric_model
         KB：self._kb_id（dataset 绑定）
+
+        优化：3 个 LLM 指标（faithfulness/answer_relevancy/answer_correctness）
+        都没勾选时，跳过生成 + 跳过 judge，省 LLM 调用费用。
+        此时 generated_answer 为 None，generation_scores 全 None。
         """
         start = time.time()
+
+        # 0. 是否需要跑生成 + LLM judge？
+        # 3 个 LLM 指标都没勾 → 跳过生成
+        need_llm_metrics = bool(
+            self._enabled_metrics & set(STANDARD_LLM_KEYS)
+        )
 
         # 1. 检索（按 embedding_model + retrieval_strategy 路由）
         strategy = get_retrieval_strategy(
@@ -270,16 +280,23 @@ class EvalRunner:
         )
         retrieved_ids = [c.get("chunk_id", "") for c in chunks]
 
-        # 2. 生成（按 generation_model 调用对应 LLM）
-        provider = get_llm_provider(task["generation_model"])
-        llm = provider.get_chat_model(temperature=0.5)
-        context = "\n\n".join(c.get("content", "")[:800] for c in chunks[:3])
-        prompt_text = (
-            f"基于以下参考资料回答问题。如果资料不足，请说明。\n\n"
-            f"【参考资料】\n{context}\n\n【问题】\n{task['question']}"
-        )
-        response = await llm.ainvoke([{"role": "user", "content": prompt_text}])
-        answer = response.content if hasattr(response, "content") else str(response)
+        # 2. 生成（按 generation_model 调用对应 LLM）— 仅在需要 LLM 指标时执行
+        if need_llm_metrics:
+            provider = get_llm_provider(task["generation_model"])
+            llm = provider.get_chat_model(temperature=0.5)
+            context = "\n\n".join(c.get("content", "")[:800] for c in chunks[:3])
+            prompt_text = (
+                f"基于以下参考资料回答问题。如果资料不足，请说明。\n\n"
+                f"【参考资料】\n{context}\n\n【问题】\n{task['question']}"
+            )
+            response = await llm.ainvoke([{"role": "user", "content": prompt_text}])
+            answer = response.content if hasattr(response, "content") else str(response)
+        else:
+            answer = None
+            logger.debug(
+                f"EvalRun {self.run_id} task qa#{task['qa_index']}: "
+                f"3 个 LLM 指标均未启用，跳过生成（generation_model={task.get('generation_model')}）"
+            )
 
         # 3. 5 个标准检索指标（按 enabled 过滤）
         ret_metrics = compute_retrieval_metrics(
@@ -287,30 +304,38 @@ class EvalRunner:
             enabled=self._enabled_metrics & set(STANDARD_RETRIEVAL_KEYS),
         )
 
-        # 4. 3 个 LLM 指标（按 enabled 过滤 + 用 self._llm_metric_model）
-        try:
-            llm_scores = await compute_all_llm_metrics(
-                question=task["question"],
-                answer=answer,
-                contexts=[c.get("content", "") for c in chunks[:5]],
-                ground_truth=task.get("ground_truth", "") or "",
-                enabled=self._enabled_metrics & set(STANDARD_LLM_KEYS),
-                llm_model=self._llm_metric_model,
-            )
-            # llm_scores = {faithfulness, answer_relevancy, answer_correctness}
-            # 未启用或失败 → None；judge_error 只在"启用但失败"时为 True
-            judge_error = any(
-                v is None and key in self._enabled_metrics
-                for key, v in llm_scores.items()
-            )
-        except Exception as e:
-            logger.exception(f"LLM 指标评估失败: {e}")
+        # 4. 3 个 LLM 指标（按 enabled 过滤 + 用 self._llm_metric_model）— 仅在需要时执行
+        if need_llm_metrics:
+            try:
+                llm_scores = await compute_all_llm_metrics(
+                    question=task["question"],
+                    answer=answer,
+                    contexts=[c.get("content", "") for c in chunks[:5]],
+                    ground_truth=task.get("ground_truth", "") or "",
+                    enabled=self._enabled_metrics & set(STANDARD_LLM_KEYS),
+                    llm_model=self._llm_metric_model,
+                )
+                # llm_scores = {faithfulness, answer_relevancy, answer_correctness}
+                # 未启用或失败 → None；judge_error 只在"启用但失败"时为 True
+                judge_error = any(
+                    v is None and key in self._enabled_metrics
+                    for key, v in llm_scores.items()
+                )
+            except Exception as e:
+                logger.exception(f"LLM 指标评估失败: {e}")
+                llm_scores = {
+                    "faithfulness": None,
+                    "answer_relevancy": None,
+                    "answer_correctness": None,
+                }
+                judge_error = True
+        else:
             llm_scores = {
                 "faithfulness": None,
                 "answer_relevancy": None,
                 "answer_correctness": None,
             }
-            judge_error = True
+            judge_error = False
 
         latency = int((time.time() - start) * 1000)
         return {

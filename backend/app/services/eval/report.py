@@ -145,8 +145,10 @@ class ReportGenerator:
         cfg = run.config or {}
         enabled = _enabled_set(cfg.get("enabled_metrics"))
         llm_model = cfg.get("llm_metric_model") or settings.MIMO_MODEL
+        # embedding_model 兼容旧字段（embedding_models 复数是 A 方案遗留，已废弃）
+        embedding = cfg.get("embedding_model") or (cfg.get("embedding_models") or [None])[0] or "未指定"
         lines.append("## 配置")
-        lines.append(f"- **Embedding**: {', '.join(cfg.get('embedding_models', []))}")
+        lines.append(f"- **Embedding**: {embedding}")
         lines.append(f"- **Retrieval**: {', '.join(cfg.get('retrieval_strategies', []))}")
         if cfg.get('rerank_models'):
             lines.append(f"- **Rerank**: {', '.join(cfg.get('rerank_models', []))}")
@@ -172,42 +174,68 @@ class ReportGenerator:
         if ret_results and enabled & {
             "recall_at_k", "precision_at_k", "hit_at_k", "mrr", "ndcg_at_k",
         }:
-            lines.append("## 检索指标汇总（K=5）")
+            # 是否多个 generation 模型（决定表格是否要 Generation 列）
+            gens = sorted({r.generation_model for r in ret_results if r.generation_model})
+            multi_gen = len(gens) > 1
+
+            K_VAL = 5  # 当前的 K 值
+            lines.append(f"## 检索指标汇总（K={K_VAL}）")
             lines.append("")
             ret_keys = [
                 k for k in ("recall_at_k", "precision_at_k", "hit_at_k", "mrr", "ndcg_at_k")
                 if k in enabled
             ]
             header_metrics = " | ".join(EVAL_METRIC_LABELS[k] for k in ret_keys)
-            lines.append(f"| Embedding | Retrieval | Rerank | {header_metrics} |")
-            lines.append("| --- | --- | --- |" + " --- |" * len(ret_keys))
-            # 按 (embedding, retrieval, rerank) 分组
+            # 表格：去掉冗余的 Embedding 列（移到 sub-header），加 Generation 列
+            if multi_gen:
+                lines.append(f"| Retrieval | Rerank | Generation | {header_metrics} |")
+                lines.append("| --- | --- | --- |" + " --- |" * len(ret_keys))
+            else:
+                lines.append(f"| Retrieval | Rerank | {header_metrics} |")
+                lines.append("| --- | --- |" + " --- |" * len(ret_keys))
+            # 按 (retrieval, rerank, generation) 分组（embedding 已在 sub-header）
             grouped = defaultdict(list)
             for r in ret_results:
-                key = (r.embedding_model, r.retrieval_strategy, r.rerank_model or "-")
+                key = (r.retrieval_strategy, r.rerank_model or "-", r.generation_model or "-")
                 grouped[key].append(r.retrieval_metrics)
-            for (emb, ret, rm), metrics_list in sorted(grouped.items()):
+            for (ret, rm, gen), metrics_list in sorted(grouped.items()):
                 avg = {k: safe_avg([m.get(k) for m in metrics_list]) for k in ret_keys}
                 vals = " | ".join(f"{avg.get(k, 0):.3f}" for k in ret_keys)
-                lines.append(f"| {emb} | {ret} | {rm} | {vals} |")
+                if multi_gen:
+                    lines.append(f"| {ret} | {rm} | {gen} | {vals} |")
+                else:
+                    lines.append(f"| {ret} | {rm} | {vals} |")
             lines.append("")
 
         # 生成质量（3 个 LLM 指标 · 按 enabled 过滤）
         gen_results = [r for r in results if r.generation_scores and not r.judge_error]
         gen_keys = [k for k in ("faithfulness", "answer_relevancy", "answer_correctness") if k in enabled]
         if gen_results and gen_keys:
+            # 是否多 retrieval 策略（决定是否加 Retrieval 列）
+            ret_strats = sorted({r.retrieval_strategy for r in gen_results if r.retrieval_strategy})
+            multi_ret = len(ret_strats) > 1
+
             lines.append("## 生成质量（LLM 指标 · 基于 LangChain）")
             lines.append("")
             header_gen = " | ".join(EVAL_METRIC_LABELS[k] for k in gen_keys)
-            lines.append(f"| Generation | {header_gen} |")
-            lines.append("| --- |" + " --- |" * len(gen_keys))
+            if multi_ret:
+                lines.append(f"| Generation | Retrieval | {header_gen} |")
+                lines.append("| --- | --- |" + " --- |" * len(gen_keys))
+            else:
+                lines.append(f"| Generation | {header_gen} |")
+                lines.append("| --- |" + " --- |" * len(gen_keys))
+            # 按 (generation, retrieval) 分组
             grouped = defaultdict(list)
             for r in gen_results:
-                grouped[r.generation_model].append(r.generation_scores)
-            for gm, scores_list in sorted(grouped.items()):
+                key = (r.generation_model, r.retrieval_strategy or "-")
+                grouped[key].append(r.generation_scores)
+            for (gm, ret), scores_list in sorted(grouped.items()):
                 avg = {k: safe_avg([s.get(k) for s in scores_list]) for k in gen_keys}
                 vals = " | ".join(f"{avg.get(k, 0):.3f}" for k in gen_keys)
-                lines.append(f"| {gm} | {vals} |")
+                if multi_ret:
+                    lines.append(f"| {gm} | {ret} | {vals} |")
+                else:
+                    lines.append(f"| {gm} | {vals} |")
             lines.append("")
 
             # 总体均值（来自 summary）

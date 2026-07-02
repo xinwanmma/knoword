@@ -12,7 +12,7 @@ from app.config import settings
 from app.core.security import get_current_user, require_admin
 from app.db.database import async_session_factory, get_db
 from app.models.eval_models import EvaluationDataset, EvaluationResult, EvaluationRun
-from app.models.models import User
+from app.models.models import KnowledgeBase, User
 from app.schemas.eval_schemas import (
     DatasetCreate, DatasetDetailOut, DatasetOut, EvalResultOut,
     EvalRunCreate, EvalRunOut, EvalRunProgress, EVAL_METRIC_KEYS,
@@ -167,6 +167,16 @@ async def create_run(
 
     # kb_ids: 由 dataset.kb_id 决定（评估走的就是数据集绑定的 KB）
     # 评估时强制使用 KB 上传文档时的 embedding（kb.embedding_model）
+    # 读 dataset 绑定的 KB 拿 embedding_model
+    kb_embedding_model = None
+    if dataset.kb_id:
+        kb_result = await db.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == dataset.kb_id)
+        )
+        kb = kb_result.scalar_one_or_none()
+        if kb:
+            kb_embedding_model = kb.embedding_model
+
     config = {
         "retrieval_strategies": req.retrieval_strategies,
         "rerank_models": req.rerank_models,
@@ -175,6 +185,7 @@ async def create_run(
         "qa_sample_size": req.qa_sample_size,  # 落库：保证续跑用同一采样
         "enabled_metrics": enabled_metrics,    # 落库：保证后续报告可还原
         "llm_metric_model": llm_metric_model,  # 落库：保证续跑用同一模型
+        "embedding_model": kb_embedding_model, # 落库：报告里显示用的 embedding
     }
     run = EvaluationRun(
         id=uuid.uuid4(),

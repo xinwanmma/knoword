@@ -11,13 +11,10 @@ from app.config import settings
 from app.db.database import init_db
 from app.services.embedding import close_all_providers
 from app.middleware.logging import RequestLoggingMiddleware
+from app.utils.logging_setup import setup_logging
 
-# 配置日志
-logging.basicConfig(
-    level=logging.DEBUG if settings.DEBUG else logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+# 配置统一日志（输出到 backend/logs/，按模块分文件）
+setup_logging(level=logging.DEBUG if settings.DEBUG else logging.INFO)
 logger = logging.getLogger(__name__)
 
 
