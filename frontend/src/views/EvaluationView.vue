@@ -2,7 +2,7 @@
   <div class="eval-view">
     <el-card class="header-card">
       <h2>评估中心</h2>
-      <p class="subtitle">对比不同 KB（embedding 模型）/ Retrieval / Rerank / Generation 模型效果</p>
+      <p class="subtitle">对比不同 Retrieval / Rerank / Generation 模型效果（KB 由数据集绑定，embedding 用 KB 上传时的）</p>
     </el-card>
 
     <el-tabs v-model="activeTab" type="border-card">
@@ -11,12 +11,6 @@
         <el-form :model="form" label-width="140px" style="max-width: 800px">
           <el-form-item label="评估名称">
             <el-input v-model="form.name" placeholder="例如：test01" />
-          </el-form-item>
-
-          <el-form-item label="知识库">
-            <el-select v-model="form.kb_id" placeholder="选择 KB" @change="onKbChange" style="width: 100%">
-              <el-option v-for="kb in kbs" :key="kb.id" :label="kb.name" :value="kb.id" />
-            </el-select>
           </el-form-item>
 
           <el-form-item label="数据集">
@@ -37,28 +31,6 @@
 
           <el-form-item label="并行度">
             <el-slider v-model="form.concurrency" :min="1" :max="8" show-stops :marks="concurrencyMarks" />
-          </el-form-item>
-
-          <el-form-item label="知识库（多选对比）">
-            <el-select
-              v-model="form.kb_ids"
-              multiple
-              filterable
-              collapse-tags
-              placeholder="选 1+ 个 KB；多选 = 多 embedding 模型对比"
-              style="width: 100%"
-            >
-              <el-option
-                v-for="kb in kbs"
-                :key="kb.id"
-                :label="`${kb.name} · ${kb.embedding_model || '未知 embedding'}`"
-                :value="kb.id"
-              />
-            </el-select>
-            <div style="margin-top: 6px; color: #999; font-size: 12px">
-              每个 KB 用自己创建时锁定的 embedding 模型；选多个 KB 自动按 embedding 模型对比检索质量。
-              留空则使用数据集绑定的 KB。
-            </div>
           </el-form-item>
 
           <el-form-item label="Retrieval 策略">
@@ -228,7 +200,7 @@
         <p>任务：{{ reportData.completed_tasks }} / {{ reportData.total_tasks }}</p>
         <h4>配置</h4>
         <ul>
-          <li>KB (embedding): {{ reportKBLabels }}</li>
+          <li>KB (embedding): {{ reportKBLabel || '（数据集绑定）' }}</li>
           <li>Retrieval: {{ reportEnabledRetrievalLabels }}</li>
           <li v-if="reportData.config.rerank_models?.length">Rerank: {{ reportData.config.rerank_models.join(', ') }}</li>
           <li>Generation: {{ reportData.config.generation_models?.join(', ') }}</li>
@@ -261,7 +233,7 @@
         </el-form-item>
         <el-form-item label="使用 KB">
           <el-select v-model="datasetForm.kb_id" style="width: 100%">
-            <el-option v-for="kb in kbs" :key="kb.id" :label="kb.name" :value="kb.id" />
+            <el-option v-for="kb in kbs" :key="kb.id" :label="`${kb.name} · ${kb.embedding_model || '未知 embedding'}`" :value="kb.id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -311,13 +283,9 @@ const llmMetricOptions = allMetricOptions.filter(m =>
 
 const form = ref({
   name: '',
-  kb_id: null,
   dataset_id: null,
   qa_count: 20,
   concurrency: 4,
-  // 多 KB 对比：每个 KB 用自己创建时锁定的 embedding 模型
-  // 留空 → 后端兜底用 dataset.kb_id
-  kb_ids: [],
   retrieval_strategies: ['vector'],
   rerank_models: ['BAAI/bge-reranker-base'],
   generation_models: ['mimo-v2.5-pro'],
@@ -361,7 +329,6 @@ const loadingDatasets = ref(false)
 const loadingRuns = ref(false)
 
 const canStart = computed(() => {
-  // kb_ids 可空（后端兜底用 dataset.kb_id）；其它必填
   return form.value.name && form.value.dataset_id
     && form.value.retrieval_strategies.length && form.value.generation_models.length
     && form.value.enabled_metrics.length > 0
@@ -425,7 +392,6 @@ const loadRuns = async () => {
   }
 }
 
-const onKbChange = () => {}
 const onRetrievalChange = () => {}
 
 const startRun = async () => {
@@ -434,8 +400,6 @@ const startRun = async () => {
     await evalAPI.createRun({
       name: form.value.name,
       dataset_id: form.value.dataset_id,
-      // 多 KB 对比：前端不传 embedding_models，全部用 KB 锁定的 embedding
-      kb_ids: form.value.kb_ids,
       retrieval_strategies: form.value.retrieval_strategies,
       rerank_models: form.value.retrieval_strategies.includes('rerank') ? form.value.rerank_models : [],
       generation_models: form.value.generation_models,
@@ -488,19 +452,21 @@ const reportEnabledRetrievalLabels = computed(() => {
   return keys.map(k => retrievalOptions.find(o => o.key === k)?.label || k).join(', ')
 })
 
-// 报告弹窗：把 kb_ids 翻译成 "KB name · embedding_model" 格式
-// 优先用 summary/embedding_models 派生分组（旧 run 也兼容）
-const reportKBLabels = computed(() => {
+// 报告弹窗：把 dataset.kb_id 翻译成 "KB name · embedding_model" 格式
+// 兼容老 run：优先用 config.embedding_models[0] 派生（kb_ids 已删除）
+const reportKBLabel = computed(() => {
   const cfg = reportData.value?.config
-  if (!cfg) return '-'
-  const kbIds = cfg.kb_ids || []
-  if (kbIds.length === 0) return '（未指定，使用数据集 KB）'
-  // 从 kbs 里找（id → name + embedding_model）
-  return kbIds.map(kid => {
-    const kb = kbs.value.find(k => k.id === kid)
-    if (kb) return `${kb.name} · ${kb.embedding_model || '未知'}`
-    return `KB#${kid}`
-  }).join(' / ')
+  if (!cfg) return ''
+  // 优先用 config.embedding_models（老 run 有这个字段）
+  const ems = cfg.embedding_models
+  if (Array.isArray(ems) && ems.length) {
+    // 找匹配 em 的 KB
+    const matched = kbs.value.find(kb => ems.includes(kb.embedding_model))
+    if (matched) return `${matched.name} · ${matched.embedding_model}`
+    // 没匹配上 KB，只显示 em
+    return ems.join(', ')
+  }
+  return ''
 })
 
 const viewReport = async (row) => {
@@ -557,11 +523,9 @@ const createDataset = async () => {
 const resetForm = () => {
   form.value = {
     name: '',
-    kb_id: null,
     dataset_id: null,
     qa_count: 20,
     concurrency: 4,
-    kb_ids: [],
     retrieval_strategies: ['vector'],
     rerank_models: ['BAAI/bge-reranker-base'],
     generation_models: ['mimo-v2.5-pro'],

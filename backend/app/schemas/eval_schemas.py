@@ -66,13 +66,8 @@ class DatasetDetailOut(DatasetOut):
 class EvalRunCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     dataset_id: uuid.UUID
-    # 评估要检索的 KB 列表（多选 = 多 embedding 模型对比）
-    # 同一文档用不同 embedding 模型构建成不同 KB → 选多个 KB 即可对比不同 embedding 的检索质量
-    # 注意：embedding 模型是 KB 的物理属性，不能跨 KB 切换
-    kb_ids: list[int] = Field(default_factory=list)
-    # [已废弃] 保留向后兼容：从前端来的 embedding_models 字段会映射成 kb_ids（按 KB 名字匹配）
-    # 实际跑评估时按 KB 绑定的 embedding model，UI 不再让选
-    embedding_models: Optional[list[str]] = None
+    # 评估检索的 KB 由 dataset.kb_id 决定（数据集创建时绑定）
+    # embedding 模型是 KB 的物理属性，评估时强制使用 KB 上传文档时的 embedding
     retrieval_strategies: list[str] = Field(default_factory=list)
     rerank_models: list[str] = Field(default_factory=list)
     generation_models: list[str] = Field(default_factory=list)

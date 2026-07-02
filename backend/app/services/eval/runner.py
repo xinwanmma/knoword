@@ -60,6 +60,9 @@ class EvalRunner:
         # enabled_metrics 和 llm_metric_model 在 _run() 启动时从 run.config 读
         self._enabled_metrics: Set[str] = set(EVAL_METRIC_KEYS)
         self._llm_metric_model: str = settings.MIMO_MODEL
+        # KB：在 _run() 启动时从 dataset.kb_id 读
+        self._kb_id: int | None = None
+        self._kb_embedding_model: str | None = None
 
     def request_stop(self):
         """用户点击「停止评估」时调用。"""
@@ -98,20 +101,17 @@ class EvalRunner:
             f"llm_metric_model={self._llm_metric_model}"
         )
 
-        # 1.5 获取本次评估所有 KB 绑定的 embedding model（多 KB 对比）
-        # 物理上 KB 用什么 embedding 就用什么，不能跨 KB 切换
-        cfg = run.config or {}
-        kb_ids_for_run = cfg.get("kb_ids") or [dataset.kb_id]
-        kb_infos = await self._get_kbs_info(kb_ids_for_run)
+        # 1.5 读 dataset 绑定的 KB 的 embedding model（评估时强制使用 KB 上传文档时的 embedding）
+        kb_id = dataset.kb_id
+        kb_embedding_model = await self._get_kb_embedding_model(kb_id) if kb_id else None
+        self._kb_id = kb_id
+        self._kb_embedding_model = kb_embedding_model
         logger.info(
-            f"EvalRun {self.run_id}: kb_ids={kb_ids_for_run} → "
-            f"embedding_models={[em for _, em in kb_infos]}"
+            f"EvalRun {self.run_id}: kb_id={kb_id} → embedding_model={kb_embedding_model}"
         )
 
-        # 2. 展开 task（按 (kb_id, retrieval, rerank, generation) 笛卡尔积）
-        all_tasks = self._expand_tasks(
-            dataset.qa_pairs, run.config, kb_infos
-        )
+        # 2. 展开 task（按 (qa × retrieval × rerank × generation) 笛卡尔积）
+        all_tasks = self._expand_tasks(dataset.qa_pairs, run.config)
         async with async_session_factory() as db:
             run = (await db.execute(
                 select(EvaluationRun).where(EvaluationRun.id == self.run_id)
@@ -144,40 +144,26 @@ class EvalRunner:
         await self._finalize_run()
 
     def _expand_tasks(
-        self, qa_pairs: list, config: dict, kb_infos: list[tuple[int, str | None]]
+        self, qa_pairs: list, config: dict
     ) -> list[dict]:
-        """展开笛卡尔积：每个 (qa × kb × retrieval × rerank × generation) 一个 task。
+        """展开笛卡尔积：每个 (qa × retrieval × rerank × generation) 一个 task。
 
-        kb_infos: [(kb_id, embedding_model), ...] —— 每个 KB 用自己的 embedding model
-        多 KB 时（不同 embedding 模型对比）= 每个 KB 各产一组 task，summary 自动按 embedding_model 分组对比
+        评估时 KB 由 dataset.kb_id 决定，embedding model 走 KB 上传文档时锁定的那个。
         """
         retrievals = config.get("retrieval_strategies", [])
         generations = config.get("generation_models", [])
         rerank_models = config.get("rerank_models", [])
-        # 兜底：如果 kb_infos 为空，用 dataset.kb_id（但 KB 不存在 → embedding 拿不到）
-        if not kb_infos:
+        kb_id = self._kb_id
+        embedding_model = self._kb_embedding_model or settings.OLLAMA_EMBED_MODEL
+
+        if not kb_id:
             return []
 
         tasks = []
         for qa_idx, qa in enumerate(qa_pairs):
-            for kb_id, em in kb_infos:
-                for rt in retrievals:
-                    if rt == "rerank" and rerank_models:
-                        for rm in rerank_models:
-                            for gm in generations:
-                                tasks.append({
-                                    "qa_index": qa_idx,
-                                    "question": qa["question"],
-                                    "ground_truth": qa["ground_truth"],
-                                    "source_chunk_ids": qa.get("source_chunk_ids", []),
-                                    "source_doc_ids": qa.get("source_doc_ids", []),
-                                    "kb_id": kb_id,
-                                    "embedding_model": em or settings.OLLAMA_EMBED_MODEL,
-                                    "retrieval_strategy": rt,
-                                    "rerank_model": rm,
-                                    "generation_model": gm,
-                                })
-                    else:
+            for rt in retrievals:
+                if rt == "rerank" and rerank_models:
+                    for rm in rerank_models:
                         for gm in generations:
                             tasks.append({
                                 "qa_index": qa_idx,
@@ -185,33 +171,28 @@ class EvalRunner:
                                 "ground_truth": qa["ground_truth"],
                                 "source_chunk_ids": qa.get("source_chunk_ids", []),
                                 "source_doc_ids": qa.get("source_doc_ids", []),
-                                "kb_id": kb_id,
-                                "embedding_model": em or settings.OLLAMA_EMBED_MODEL,
+                                "embedding_model": embedding_model,
                                 "retrieval_strategy": rt,
-                                "rerank_model": None,
+                                "rerank_model": rm,
                                 "generation_model": gm,
                             })
+                else:
+                    for gm in generations:
+                        tasks.append({
+                            "qa_index": qa_idx,
+                            "question": qa["question"],
+                            "ground_truth": qa["ground_truth"],
+                            "source_chunk_ids": qa.get("source_chunk_ids", []),
+                            "source_doc_ids": qa.get("source_doc_ids", []),
+                            "embedding_model": embedding_model,
+                            "retrieval_strategy": rt,
+                            "rerank_model": None,
+                            "generation_model": gm,
+                        })
         return tasks
 
-    async def _get_kbs_info(self, kb_ids: list[int]) -> list[tuple[int, str | None]]:
-        """读多个 KB 的 (id, embedding_model) 列表。用于多 KB 对比。
-
-        返回 [(kb_id, embedding_model), ...] —— 顺序与 kb_ids 一致。
-        """
-        if not kb_ids:
-            return []
-        async with async_session_factory() as db:
-            rows = (await db.execute(
-                select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids))
-            )).scalars().all()
-            by_id = {k.id: k for k in rows}
-            return [
-                (kid, by_id[kid].embedding_model if kid in by_id else None)
-                for kid in kb_ids
-            ]
-
     async def _get_kb_embedding_model(self, kb_id: int) -> str | None:
-        """[已废弃] 保留兼容：读单个 KB 的 embedding model。"""
+        """读 KB 的 embedding model。"""
         async with async_session_factory() as db:
             kb = (await db.execute(
                 select(KnowledgeBase).where(KnowledgeBase.id == kb_id)
@@ -260,7 +241,7 @@ class EvalRunner:
 
         启用的指标：self._enabled_metrics（来自 run.config）
         LLM 评估模型：self._llm_metric_model
-        每个 task 关联一个 kb_id（多 KB 对比：每 KB 独立 task）
+        KB：self._kb_id（dataset 绑定）
         """
         start = time.time()
 
@@ -270,13 +251,13 @@ class EvalRunner:
             embedding_model=task["embedding_model"],
             rerank_model=task.get("rerank_model"),
         )
-        # KB IDs：本 task 关联的 kb_id（_expand_tasks 已按 KB 拆分 task）
-        kb_ids = [task["kb_id"]]
+        # KB：dataset 绑定的 KB
+        kb_ids = [self._kb_id] if self._kb_id else []
         chunks = await strategy.retrieve(
             query=task["question"],
             kb_ids=kb_ids,
             top_k=5,
-            search_all=False,  # 多 KB 对比时不能用 search_all，否则跨 KB
+            search_all=False,
         )
         retrieved_ids = [c.get("chunk_id", "") for c in chunks]
 
@@ -338,24 +319,6 @@ class EvalRunner:
             "judge_error": judge_error,
             "latency_ms": latency,
         }
-
-    async def _get_kb_ids_for_task(self, task: dict) -> List[int]:
-        """[已废弃] 评估时获取 run 关联的 KB 列表。
-
-        现在 _run_single_task 直接从 task['kb_id'] 取（_expand_tasks 已按 KB 拆分 task），
-        本方法仅保留兼容（旧代码可能还在用）。
-        """
-        if task.get("kb_id"):
-            return [task["kb_id"]]
-        # 兜底：走 dataset 绑定的 KB（极少用到，task 一般有 kb_id）
-        async with async_session_factory() as db:
-            run = (await db.execute(
-                select(EvaluationRun).where(EvaluationRun.id == self.run_id)
-            )).scalar_one()
-            dataset = (await db.execute(
-                select(EvaluationDataset).where(EvaluationDataset.id == run.dataset_id)
-            )).scalar_one()
-            return [dataset.kb_id]
 
     async def _save_result(self, result: dict):
         """每个 result 完成后立即 insert。"""
