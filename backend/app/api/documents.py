@@ -70,12 +70,15 @@ async def upload_documents(
         saved_name, file_path = await _save_file(file, kb_id)
 
         suffix = Path(file.filename).suffix.lower()
+        # 关键：Document.embedding_model 必须 = KB.embedding_model
+        # 否则评估时按 KB 字段走（8B/4096 维）但 collection 实际是 0.6b（1024 维）→ 维度冲突
         doc = Document(
             kb_id=kb_id,
             filename=file.filename,
             file_path=file_path,
             file_type=suffix,
             status="processing",
+            embedding_model=kb.embedding_model,
         )
         db.add(doc)
         await db.flush()  # 获取 doc.id
