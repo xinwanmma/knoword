@@ -42,11 +42,12 @@ class VectorRetrieval(RetrievalStrategy):
         else:
             where_filter = None
 
-        # 3. 向量检索
+        # 3. 向量检索（按 embedding_model 路由 collection）
         results = search_documents(
             query_embedding=query_emb,
             n_results=top_k,
             where=where_filter,
+            embedding_model=self._embedder.model_name,
         )
 
         if not results.get("documents"):

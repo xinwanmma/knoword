@@ -24,7 +24,7 @@ from typing import List, Dict, Any
 from app.config import settings
 from app.services.embedding import get_embedding_provider
 from app.services.retrieval.base import RetrievalStrategy
-from app.services.vectorstore import get_collection, search_documents
+from app.services.vectorstore import DEFAULT_EMBEDDING_MODEL, get_collection, search_documents
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class HybridRetrieval(RetrievalStrategy):
 
     # ===== BM25 索引加载（与原 BM25Retrieval 一致，保留 pickle 缓存兼容）=====
 
-    def _load_bm25_index(self, kb_id: int):
+    def _load_bm25_index(self, kb_id: int, embedding_model: str | None = None):
         """加载或构建 BM25 索引。"""
         if kb_id in self._indices:
             return self._indices[kb_id]
@@ -86,7 +86,9 @@ class HybridRetrieval(RetrievalStrategy):
             return chunks, index
 
         # 首次构建：从 ChromaDB 读出该 KB 的所有 chunk
-        collection = get_collection()
+        # 优先用 KB 的 embedding_model 路由到对应 collection
+        em = embedding_model or DEFAULT_EMBEDDING_MODEL
+        collection = get_collection(em)
         all_data = collection.get(where={"kb_id": kb_id})
         if not all_data.get("documents"):
             return [], None
@@ -146,6 +148,7 @@ class HybridRetrieval(RetrievalStrategy):
             query_embedding=query_emb,
             n_results=top_n,
             where=where_filter,
+            embedding_model=self._embedder.model_name,
         )
         if not results.get("documents"):
             return []

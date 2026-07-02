@@ -13,17 +13,16 @@ class SiliconFlowProvider(EmbeddingProvider):
     """通过 SiliconFlow 云端 API 调用 Qwen3-Embedding 系列。
 
     支持模型：
-    - Qwen/Qwen3-Embedding-8B
-    - Qwen/Qwen3-Embedding-4B
+    - Qwen/Qwen3-Embedding-8B（默认，4096 维）
+    - Qwen/Qwen3-Embedding-4B（4096 维）
 
-    维度策略：4B/8B 默认 4096 维，但 ChromaDB 共享 collection 已被 0.6b 锁死 1024 维。
-    用 MRL (Matryoshka) 强制输出 1024 维，与 collection 兼容。
+    维度策略：默认 4096 维全量输出（不压缩）。
+    不同 embedding 物理隔离（vectorstore.py 按 embedding_model 分 collection）。
     0.6b 走 Ollama（天然 1024 维），不在本 provider。
     """
 
-    # Qwen3-Embedding 支持 Matryoshka (MRL)：可指定 32/64/128/256/512/1024/2048/4096
-    # 强制 1024 维：与 ChromaDB 共享 collection 的锁死维度一致（被 0.6b 写入时定下）
-    MATRYOSHKA_DIM = 1024
+    # Qwen3-Embedding 4B/8B 默认维度
+    DEFAULT_DIMENSION = 4096
 
     def __init__(self, model: str | None = None):
         # 默认用 8B
@@ -31,8 +30,8 @@ class SiliconFlowProvider(EmbeddingProvider):
         self._api_key = settings.SILICONFLOW_API_KEY
         self._base_url = settings.SILICONFLOW_BASE_URL
         self._client: httpx.AsyncClient | None = None
-        # 强制 1024 维（MRL 压缩到 1024，保持 8B 的语义但匹配 collection 维度）
-        self._dimension = self.MATRYOSHKA_DIM
+        # 默认 4096 维（不传 dimensions 参数，让模型输出默认维度）
+        self._dimension = self.DEFAULT_DIMENSION
 
         if not self._api_key:
             raise RuntimeError(
@@ -61,14 +60,10 @@ class SiliconFlowProvider(EmbeddingProvider):
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         client = await self._get_client()
-        # SiliconFlow 支持批量 + dimensions（MRL）参数
+        # 不传 dimensions，让模型输出默认维度（4B/8B = 4096 维）
         response = await client.post(
             "/embeddings",
-            json={
-                "model": self._model,
-                "input": texts,
-                "dimensions": self._dimension,  # MRL 压缩到 1024
-            },
+            json={"model": self._model, "input": texts},
         )
         response.raise_for_status()
         data = response.json()

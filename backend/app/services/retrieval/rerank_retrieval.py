@@ -43,7 +43,7 @@ class RerankRetrieval(RetrievalStrategy):
         if not kb_ids and not search_all:
             return []
 
-        # 1. 向量初筛
+        # 1. 向量初筛（按 embedding_model 路由 collection）
         query_emb = await self._embedder.embed_query(query)
 
         if kb_ids and not search_all:
@@ -58,6 +58,7 @@ class RerankRetrieval(RetrievalStrategy):
             query_embedding=query_emb,
             n_results=self._rerank_top_n,
             where=where_filter,
+            embedding_model=self._embedder.model_name,
         )
 
         if not results.get("documents"):

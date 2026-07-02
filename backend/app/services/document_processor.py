@@ -102,10 +102,17 @@ async def process_document(doc_id: int, file_path: str):
                     "page": 0,  # 新 chunker 切分后无页号信息
                     "start_char": 0,
                     "end_char": len(text),
+                    "embedding_model": embedding_model,  # 记录该向量用的 embedding（便于迁移）
                 })
 
-            # 步骤 4：写入 ChromaDB
-            add_documents(ids, documents, embeddings, metadatas)
+            # 步骤 4：写入 ChromaDB（按 embedding_model 路由 collection）
+            add_documents(
+                ids=ids,
+                documents=documents,
+                embeddings=embeddings,
+                metadatas=metadatas,
+                embedding_model=embedding_model,
+            )
 
             # 更新文档状态
             doc.status = "ready"
