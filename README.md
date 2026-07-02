@@ -1,157 +1,190 @@
-# RAG 知识库系统
+# Knoword — RAG 知识库系统
 
-一个基于 **LangChain + FastAPI + Vue3** 的 RAG 知识库系统，支持多知识库管理、智能对话、评估中心。
+> 基于 **LangChain 1.x + FastAPI + Vue 3** 的多知识库 RAG 系统，支持智能对话、检索增强生成、自动化评估。
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org)
+[![Vue](https://img.shields.io/badge/Vue-3.x-brightgreen)](https://vuejs.org)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+---
 
 ## ✨ 核心特性
 
 - **多知识库管理**：每个 KB 独立配置 embedding / chunking / retrieval 策略
-- **策略可插拔**：5 类 Strategy + Factory（embedding / llm / rerank / retrieval / chunking）
+- **5 大可插拔 Strategy + Factory 模式**：LLM / Embedding / Rerank / Retrieval / Chunking
+- **多 LLM 兼容**：MiMo（默认）/ DeepSeek / GLM 智谱，全部 OpenAI 兼容协议
+- **多 Embedding 兼容**：Ollama（本地）/ HuggingFace（本地）/ SiliconFlow（云端）
+- **Rerank 支持**：本地 BAAI CrossEncoder + 云端 Qwen3-Reranker
 - **智能对话**：SSE 流式生成 + 多轮对话 + 参考资料溯源
-- **评估中心**：每次评估默认跑 **8 个指标**（5 检索 + 3 LLM），基于 LangChain
-- **Rerank 支持**：本地 HF CrossEncoder + 云端 SiliconFlow API
+- **评估中心**：8 个指标（5 检索 + 3 LLM），**支持断点续传 / 空状态补跑 / 跨 KB 复制数据集**
 - **管理后台**：用户管理、KB 配额、操作日志
 
-## 📊 评估指标（8 个，可手动开关，默认全开）
+---
 
-| 类型 | 指标 | 说明 |
+## 📊 评估指标（8 个，可独立开关）
+
+| 类型 | 指标 | 含义 |
 |------|------|------|
-| 检索 | **Recall@K** | 所有相关文档里，前 K 个找回了多少比例 |
-| 检索 | **Precision@K** | 前 K 个结果里，相关文档的比例 |
-| 检索 | **Hit@K** | 前 K 个里有没有至少一个相关文档 |
-| 检索 | **MRR** | 第一个正确答案的倒数排名 |
-| 检索 | **NDCG@K** | 考虑排序质量的综合指标 |
-| LLM | **Faithfulness / Groundedness** | 答案是否由 retrieved contexts 推出 |
-| LLM | **Answer Relevancy** | 答案是否直接回答了问题 |
-| LLM | **Answer Correctness** | 0.5×F1 + 0.5×embedding cos sim |
+| 检索 | **Recall@K** | ground-truth chunks 在 top-K 中被找回的比例 |
+| 检索 | **Precision@K** | top-K 中 ground-truth 占比 |
+| 检索 | **Hit@K** | top-K 是否至少含一个 ground-truth |
+| 检索 | **MRR** | 首个 ground-truth 的倒数排名 |
+| 检索 | **NDCG@K** | 排序质量的综合指标 |
+| LLM | **Faithfulness** | 答案是否由 retrieved contexts 推出（0-1）|
+| LLM | **Answer Relevancy** | 答案是否直接回答了问题（0-1）|
+| LLM | **Answer Correctness** | 0.5×F1 + 0.5×embedding cosine（0-1）|
 
-> 8 个指标可独立开关；默认全开，关闭后该指标不计入 summary / 报告。
-> LLM 评估模型默认 `settings.MIMO_MODEL`（即 `mimo-v2.5-pro`），UI 启动时可改为 `mimo-v2.5` / 其它（手输任意模型名）。
+> LLM 评估模型默认 `mimo-v2.5`，启动评估时可在 UI 切换。关闭指标后该指标不计入 summary / 报告。
+
+---
 
 ## 🏗️ 技术栈
 
 **后端**
-- FastAPI + SQLAlchemy(async) + Alembic
-- LangChain 1.x（核心架构：ChatOpenAI + ChatPromptTemplate + RunnableParallel）
-- ChromaDB（本地持久化向量库）
-- rank_bm25（BM25 检索）
+- FastAPI · SQLAlchemy(async) · Alembic
+- LangChain 1.x（ChatOpenAI + ChatPromptTemplate + RunnableParallel）
+- ChromaDB（按 embedding 模型分库：`kb_emb_{name}`）
+- rank_bm25
 
 **前端**
-- Vue 3 + Pinia + Vue Router
-- Element Plus
-- Vite
+- Vue 3 · Pinia · Vue Router · Element Plus · Vite
 
-**AI / ML**
-- MiMo LLM（小米，默认生成模型）
-- DeepSeek / GLM 智谱（可选）
-- Ollama（本地 embedding，推荐）
-- HuggingFace（本地 embedding + rerank）
+**AI**
+- LLM：MiMo / DeepSeek / GLM
+- Embedding：Ollama / HuggingFace / SiliconFlow
+- Rerank：HuggingFace / SiliconFlow
+
+---
 
 ## 📁 项目结构
 
 ```
-d:\HHHUBS\clone\knoword\
-├── README.md
-├── start.py                       # 一键启动（后端 + 前端）
+knoword/
+├── README.md                          # 本文件
+├── start.py                           # 一键启动（带预检）
 ├── .gitignore
 │
 ├── backend/
-│   ├── .env.example               # 环境变量模板
+│   ├── .env.example                   # 环境变量模板
 │   ├── requirements.txt
-│   ├── alembic/                   # DB 迁移
+│   ├── alembic/                       # DB 迁移（9 个版本）
 │   ├── app/
-│   │   ├── main.py                # FastAPI 入口
-│   │   ├── config.py              # Settings
-│   │   ├── api/                   # HTTP 路由
-│   │   │   ├── auth.py
-│   │   │   ├── chat.py
-│   │   │   ├── documents.py
-│   │   │   ├── knowledge_base.py
-│   │   │   ├── admin.py
-│   │   │   ├── eval.py
-│   │   │   └── health.py
-│   │   ├── core/security.py       # JWT 认证
-│   │   ├── db/database.py         # SQLAlchemy session
-│   │   ├── models/                # ORM 模型
-│   │   ├── schemas/               # Pydantic schemas
+│   │   ├── main.py                    # FastAPI 入口
+│   │   ├── config.py                  # Settings
+│   │   ├── api/                       # 7 个 HTTP router
+│   │   │   ├── auth.py                #   /api/auth
+│   │   │   ├── chat.py                #   /api/chat
+│   │   │   ├── documents.py           #   /api/documents
+│   │   │   ├── knowledge_base.py      #   /api/knowledge-base
+│   │   │   ├── eval.py                #   /api/eval
+│   │   │   ├── admin.py               #   /api/admin/*
+│   │   │   └── health.py              #   /api/system/health
+│   │   ├── core/security.py           # JWT
+│   │   ├── db/database.py             # SQLAlchemy session（自动适配 PG / SQLite）
+│   │   ├── middleware/logging.py      # 访问日志
+│   │   ├── models/                    # ORM
+│   │   ├── schemas/                   # Pydantic
 │   │   └── services/
-│   │       ├── chunking/          # ★ Chunking Strategy + Factory
-│   │       ├── embedding/         # ★ Embedding Provider + Factory
-│   │       ├── llm_provider/      # ★ LLM Provider + Factory
-│   │       ├── rerank/            # ★ Rerank Provider + Factory
-│   │       ├── retrieval/         # ★ Retrieval Strategy + Factory
-│   │       ├── eval/              # ★ 评估系统
-│   │       ├── parser.py
-│   │       ├── document_processor.py
-│   │       ├── retrieval_pipeline.py
-│   │       └── vectorstore.py
-│   ├── data/                      # 运行时数据（gitignore）
+│   │       ├── chunking/              # ★ Strategy + Factory
+│   │       ├── embedding/             # ★ Provider + Factory
+│   │       ├── llm_provider/          # ★ Provider + Factory
+│   │       ├── rerank/                # ★ Provider + Factory
+│   │       ├── retrieval/             # ★ Strategy + Factory
+│   │       ├── eval/                  # 评估系统（runner/report/metrics/prompts）
+│   │       ├── vectorstore.py         # ChromaDB 包装（按 embedding 分库）
+│   │       ├── retrieval_pipeline.py  # 检索编排
+│   │       ├── document_processor.py  # 文档入库
+│   │       └── parser.py              # 多格式解析
+│   ├── data/                          # 运行时（gitignore）
 │   │   ├── uploads/
-│   │   └── chromadb/
-│   ├── reports/                   # 评估报告（gitignore）
-│   ├── tests/
-│   │   └── test_auth.py
-│   └── migrate_eval_data.py       # 一次性数据迁移脚本
+│   │   └── chromadb/                  # kb_emb_*/ 每个 embedding 一个目录
+│   ├── reports/                       # 评估报告（gitignore，每个 run 1 .json + 1 .md）
+│   ├── logs/                          # 评估 / LLM / 访问日志
+│   ├── scripts/                       # 复用脚本（list_kb_and_datasets.py 等）
+│   └── tests/
 │
-└── frontend/
-    ├── package.json
-    ├── vite.config.js
-    ├── index.html
-    └── src/
-        ├── main.js
-        ├── App.vue
-        ├── api/index.js
-        ├── router/index.js
-        ├── stores/user.js
-        ├── styles/global.css
-        └── views/
-            ├── LoginView.vue
-            ├── RegisterView.vue
-            ├── ChatView.vue
-            ├── KnowledgeBaseView.vue
-            ├── AdminView.vue
-            └── EvaluationView.vue
+├── frontend/
+│   ├── package.json
+│   ├── vite.config.js
+│   └── src/
+│       ├── main.js · App.vue
+│       ├── api/index.js               # axios 封装
+│       ├── router/index.js            # 路由 + requiresAdmin 守卫
+│       ├── stores/user.js             # Pinia 用户状态
+│       ├── styles/global.css
+│       └── views/                     # 6 个页面
+│           ├── LoginView.vue
+│           ├── RegisterView.vue
+│           ├── ChatView.vue
+│           ├── KnowledgeBaseView.vue
+│           ├── AdminView.vue
+│           └── EvaluationView.vue
+│
+└── docs/                              # 详细文档
+    ├── README.md                      # 文档索引
+    ├── ARCHITECTURE.md                # 系统架构
+    ├── API.md                         # REST 接口
+    ├── OPERATIONS.md                  # 运维 / 部署
+    └── REFACTOR_PLAN.md               # 文档重构计划（ADR）
 ```
+
+---
 
 ## 🚀 快速开始
 
-### 1. 启动后端
+### 1. 准备环境
+
+- **Python 3.10+**
+- **Node.js 18+**
+- **PostgreSQL 14+**（默认端口 5432）
+- **Ollama**（本地 embedding，可选；用云端 embedding 可不装）
+
+### 2. 启动项目
 
 ```bash
-# 准备环境
-cd backend
-python -m venv venv
-venv\Scripts\activate            # Windows
-pip install -r requirements.txt
+# 克隆
+git clone <repo-url>
+cd knoword
 
-# 配置环境变量
-copy .env.example .env           # Windows
-# 编辑 .env 填入 MIMO_API_KEY、JWT_SECRET_KEY、HF_CACHE_DIR
-
-# 初始化数据库
-alembic upgrade head
-
-# 启动后端
-python start.py                  # 或 uvicorn app.main:app --reload
+# 一键预检 + 启动（推荐先 --check 只检查不启动）
+python start.py --check
+python start.py
 ```
 
-后端默认运行在 `http://localhost:8000`，API 文档在 `http://localhost:8000/docs`。
+`start.py` 会自动检查：
+1. Python 版本
+2. `.env` 是否就位
+3. PostgreSQL / Ollama / MiMo API key 可达
+4. 后端依赖 / 前端 node_modules
 
-### 2. 启动前端
+通过后会在新窗口里启动后端（:8000）和前端（:5173）。
+
+### 3. 手动启动
+
+如果 `start.py` 失败或要分别启动：
 
 ```bash
+# 后端
+cd backend
+python -m venv venv
+venv\Scripts\activate               # Windows
+pip install -r requirements.txt
+cp .env.example .env                # 填写 MIMO_API_KEY / JWT_SECRET_KEY / HF_CACHE_DIR
+alembic upgrade head
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# 前端
 cd frontend
 npm install
 npm run dev
 ```
 
-前端默认运行在 `http://localhost:5173`。
+启动后访问：
+- 前端：http://localhost:5173
+- 后端 API：http://localhost:8000
+- OpenAPI 文档：http://localhost:8000/docs
 
-### 3. 一键启动（项目根目录）
-
-```bash
-# 在 d:\HHHUBS\clone\knoword\ 目录下
-python start.py
-```
+---
 
 ## 🔑 必填环境变量
 
@@ -165,29 +198,81 @@ python start.py
 | `GLM_API_KEY` | ❌ | GLM 智谱（可选）|
 | `SILICONFLOW_API_KEY` | ❌ | SiliconFlow 云端 embedding/rerank（可选）|
 
-完整配置见 `backend/.env.example`。
+完整配置（含每项影响范围）见 [OPERATIONS.md#环境变量](docs/OPERATIONS.md)。
+
+---
 
 ## 🧪 测试
 
 ```bash
 cd backend
-pytest tests/test_auth.py -v
+pytest tests/ -v
 ```
 
-> 测试用 `sqlite+aiosqlite:///./test.db`（由 `tests/conftest.py` 自动设置），`database.py` 会按 URL 自动选择引擎配置（SQLite 走 NullPool，不接 pool_size 等 PG 专用参数）。生产 PostgreSQL 走原连接池配置。
+> 测试用 `sqlite+aiosqlite:///./test.db`（`tests/conftest.py` 自动设置）。`database.py` 按 URL 自动适配：SQLite 走 NullPool，PostgreSQL 走原连接池。
+
+---
 
 ## 📈 评估中心使用
 
-1. 进入「评估中心」→ 创建数据集（自动从 KB 生成 QA 对，或手动导入）
-2. 配置评估组合：`retrieval × rerank × generation`（笛卡尔积）
-3. （可选）勾选/取消评估指标，配置 LLM 评估模型 — 默认全开 8 个 + `mimo-v2.5`
+1. 创建 KB → 上传文档（自动分块 + embedding 入 ChromaDB）
+2. 进入「评估中心」→ 创建数据集（自动从 KB 生成 QA 对，或导入）
+3. 配置评估组合：`retrieval × rerank × generation`（笛卡尔积）
 4. 启动评估，自动跑启用的指标
-5. 查看报告（`backend/reports/eval_*.json` + `*.md`）
+5. 报告输出到 `backend/reports/eval_{name}_{time}_{id}.{json|md}` 永久保留
 
-> KB 由数据集创建时绑定，评估时强制使用 KB 上传文档时的 embedding（KB 创建时锁定）。
-> 不支持多 embedding 模型对比（ChromaDB 共享 collection，维度锁死）。
+**高级功能**：
+- **断点续传**：评估中断后点「续跑」，自动跳过已完成 task
+- **空状态补跑**：因 LLM 余额耗尽失败的 task，充值后点「续跑」自动补
+- **跨 KB 复制数据集**：不同 embedding 的 KB 可共用同一份 QA（用 `backend/scripts/copy_dataset_to_other_kb.py`）
+- **多 embedding 对比**：创建不同 KB 用不同 embedding，评估时多选 KB 自动产出对比报告
 
-详细算法见 `backend/app/services/eval/metrics.py`（检索）和 `llm_metrics.py`（LLM）。
+详细算法见 [docs/ARCHITECTURE.md#评估系统](docs/ARCHITECTURE.md)。
+
+---
+
+## 🛠️ 常见问题
+
+<details>
+<summary><b>Q: 启动报 "Collection expecting embedding with dimension of 1024, got 4096"</b></summary>
+
+ChromaDB collection 与 embedding 模型维度不匹配。**新建 KB 时务必确认 embedding 模型**；切换 embedding 必须重新上传文档。详见 [OPERATIONS.md#ChromaDB 操作](docs/OPERATIONS.md#chromadb-操作)。
+</details>
+
+<details>
+<summary><b>Q: 评估中途报 "402 Insufficient account balance"</b></summary>
+
+LLM 余额耗尽。充值后点「续跑」即可继续。也可把 LLM judge 改为 deepseek 减少 mimo 用量。详见 [OPERATIONS.md#常见错误](docs/OPERATIONS.md#常见错误)。
+</details>
+
+<details>
+<summary><b>Q: Vite HMR 改路由不生效</b></summary>
+
+`router/index.js` 改动 Vite HMR 不可靠，需要 Ctrl+C 重启 `npm run dev`。
+</details>
+
+<details>
+<summary><b>Q: HF 模型下载慢 / 失败</b></summary>
+
+1. 设置 `HF_OFFLINE=0`（默认），确保有网络
+2. 检查 `HF_CACHE_DIR` 路径存在且可写
+3. 镜像：export `HF_ENDPOINT=https://hf-mirror.com`
+</details>
+
+更多 FAQ 见 [OPERATIONS.md#常见错误](docs/OPERATIONS.md#常见错误)。
+
+---
+
+## 📚 文档导航
+
+| 文档 | 适合谁 | 内容 |
+|------|--------|------|
+| [README.md](README.md) | 所有用户 | 项目入口 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 二次开发者 | 系统架构、5 大 Factory、关键流程、ADR |
+| [docs/API.md](docs/API.md) | 前端 / 集成方 | 39 个 REST 端点 + 请求/响应示例 |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | 运维 / DBA | 部署、备份、迁移、监控、排查 SOP |
+
+---
 
 ## 📝 License
 

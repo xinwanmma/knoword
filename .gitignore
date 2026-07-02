@@ -16,8 +16,22 @@ ehthumbs.db
 .vscode/
 *.iml
 *.code-workspace
-.cursor/
-.aider*
+
+# --- AI 编程助手 / 工具 ---
+.cursor/                  # Cursor IDE
+.aider*                   # Aider
+.aider.chat.history.md
+.aider.input.history
+.continue/                # Continue.dev
+.windsurf/                # Windsurf
+.cody/                    # Sourcegraph Cody
+.codeium/                 # Codeium
+.copilot/                 # GitHub Copilot 本地缓存
+.trae/                    # Trae IDE
+.trae-cn/                 # Trae-CN
+.codegraph/               # 代码图谱工具
+.reasonix/
+reasonix.toml
 
 # --- Python 编译/缓存 ---
 __pycache__/
@@ -33,15 +47,24 @@ dist/
 build/
 *.egg
 *.whl
+
+# --- Python 工具缓存 ---
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
+coverage.xml
+.tox/
+.cache/
 
 # --- 虚拟环境 ---
 venv/
 .venv/
 env/
 .python-version
+.python-version.bak
 
 # --- 环境变量（禁止提交） ---
 .env
@@ -50,47 +73,77 @@ env/
 backend/.env
 backend/.env.local
 backend/.env.*.local
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
 !.env.example
+!backend/.env.example
+!frontend/.env.example
 
 # --- 数据库 / SQLite ---
 *.db
 *.sqlite
 *.sqlite3
 backend/test.db
-backend/test_chromadb/
 
 # --- 后端运行时数据 ---
 backend/data/
+backend/data/**
 backend/reports/
+backend/reports/**
+backend/logs/
+backend/logs/**
 backend/uploads/
+backend/uploads/**
+backend/test_chromadb/
 
-# --- 临时 / 备份 ---
+# --- 临时 / 一次性脚本（根目录散落的，保留历史已 commit 的） ---
+# 这些是历史一次性脚本，已经在 git 历史里，新写的 .py 请放 backend/scripts/
+backend/diag_*.py
+backend/tmp_*.py
+backend/debug_*.py
+backend/scripts/temp/
+backend/scripts/**/tmp_*.py
+
+# --- 备份 / 临时文件 ---
 *.bak
 *.tmp
 *.orig
 *.rej
 *.log
-logs/
-backend/test_metrics.py
-backend/diag_*.py
-backend/tmp_*.py
 
 # --- 前端 ---
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/.cache/
-frontend/.env
-frontend/.env.local
+frontend/.parcel-cache/
+frontend/.next/
+frontend/.nuxt/
+frontend/coverage/
+frontend/.eslintcache
 
-# --- 覆盖率 / 文档构建 ---
-.coverage
-htmlcov/
-coverage.xml
-.tox/
+# --- 文档构建 ---
 docs/_build/
+docs/.doctrees/
+site/
 
-# --- 工具配置（本地生成） ---
-.codegraph/
-.reasonix/
-reasonix.toml
+# --- Notebook ---
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# --- 监控 / 性能分析 ---
+*.prof
+*.lprof
+.pstats
+
+# --- Docker ---
+*.pid
+docker-compose.override.yml
+
+# --- 系统级（少见但可能出现） ---
+*.swp
+*.swo
+*.swn
+core.*
+*.core
