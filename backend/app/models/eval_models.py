@@ -84,9 +84,12 @@ class EvaluationResult(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
+        # 用 NULLS NOT DISTINCT：rerank_model=NULL 也参与唯一判定
+        # 否则 vector / hybrid 策略重跑时不会触发 ON CONFLICT，会创建重复行
         UniqueConstraint(
             "run_id", "qa_index", "embedding_model",
             "retrieval_strategy", "rerank_model", "generation_model",
             name="uq_eval_result",
+            postgresql_nulls_not_distinct=True,
         ),
     )

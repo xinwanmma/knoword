@@ -229,15 +229,19 @@ class EvalRunner:
     async def _get_completed_task_keys(self) -> set[str]:
         """返回"真正完成"的 task key 集合。
 
-        完成定义：DB 里有行 + 没有 judge_error。
-        judge_error=true 的 task 虽然有行，但 LLM judge 步骤没出结果，
-        需要在续跑时重跑（re-run 会重新做 retrieval + generation + judge）。
+        完成定义（同时满足）：
+        - DB 里有行
+        - judge_error = False（LLM judge 成功）
+        - error_message IS NULL（主任务没失败，比如 402）
+        - retrieved_chunks IS NOT NULL（确实有检索结果）
         """
         async with async_session_factory() as db:
             result = await db.execute(
                 select(EvaluationResult).where(
                     EvaluationResult.run_id == self.run_id,
                     EvaluationResult.judge_error.is_(False),
+                    EvaluationResult.error_message.is_(None),
+                    EvaluationResult.retrieved_chunks.isnot(None),
                 )
             )
             rows = result.scalars().all()
