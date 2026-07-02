@@ -207,23 +207,27 @@ async def main(source_dataset_id: str, target_kb_id: int, force: bool = False, d
         new_qa = dict(qa)  # shallow copy
 
         # 6.1 chunk_id 前缀替换：kb_6_doc_X_chunk_Y -> kb_7_doc_X_chunk_Y
+        # chunk_id 格式: "kb_{kb_id}_doc_{doc_id}_chunk_{chunk_index}"
+        # 拆 _ 后：['kb', '{kb_id}', 'doc', '{doc_id}', 'chunk', '{chunk_index}'] = 6 parts
         old_chunks = qa.get("source_chunk_ids", []) or []
         new_chunks = []
         for cid in old_chunks:
-            # chunk_id 格式: kb_{kb_id}_doc_{doc_id}_chunk_{chunk_index}
             parts = cid.split("_")
-            if len(parts) >= 5 and parts[0] == "kb":
-                # 提取 doc_id，更新
+            if len(parts) >= 6 and parts[0] == "kb" and parts[2] == "doc" and parts[4] == "chunk":
                 try:
-                    old_doc_id = int(parts[2])
+                    old_kb_id = int(parts[1])
+                    old_doc_id = int(parts[3])
+                    chunk_index = parts[5]
                     new_doc_id = doc_id_map.get(old_doc_id, old_doc_id)
-                    new_cid = f"kb_{target_kb_id}_doc_{new_doc_id}_chunk_{parts[4]}"
+                    new_cid = f"kb_{target_kb_id}_doc_{new_doc_id}_chunk_{chunk_index}"
                     new_chunks.append(new_cid)
                     total_chunk_refs += 1
-                except (ValueError, IndexError):
-                    new_chunks.append(cid)  # 解析失败保留原值
+                except (ValueError, IndexError) as e:
+                    print(f"  ⚠️  无法解析 chunk_id: {cid!r} ({e})，保留原值")
+                    new_chunks.append(cid)
             else:
-                new_chunks.append(cid)  # 非标准格式保留
+                # 非标准格式（如 "chunk_13" 没 kb_ 前缀），保留原值
+                new_chunks.append(cid)
 
         new_qa["source_chunk_ids"] = new_chunks
 
