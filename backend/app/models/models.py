@@ -60,6 +60,9 @@ class Document(Base):
     chunk_count = Column(Integer, default=0)
     status = Column(String(20), default="processing")  # processing / ready / failed
     error = Column(Text, nullable=True)
+    # 文档实际用的 embedding model（上传时从 KB 继承）
+    # 与 KB.embedding_model 一致；KB 改 embedding_model 时，文档不会自动跟随
+    embedding_model = Column(String(200), default="qwen3-embedding:0.6b")
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
