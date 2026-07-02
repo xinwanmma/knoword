@@ -178,7 +178,8 @@ class ReportGenerator:
             gens = sorted({r.generation_model for r in ret_results if r.generation_model})
             multi_gen = len(gens) > 1
 
-            K_VAL = 5  # 当前的 K 值
+            # K 从 run.config 读，缺省 10（之前是硬编码 5）
+            K_VAL = (run.config or {}).get("eval_top_k") or 10
             lines.append(f"## 检索指标汇总（K={K_VAL}）")
             lines.append("")
             ret_keys = [
@@ -252,6 +253,28 @@ class ReportGenerator:
                         if parts:
                             lines.append(f"- **{gm_key}**: {parts}")
                 lines.append("")
+
+        # P3 out-of-scope 表现（如果 dataset 包含 OOS 题）
+        oos_results = [r for r in results if r.is_out_of_scope]
+        if oos_results:
+            lines.append("## Out-of-Scope 表现（KB 中无答案的题）")
+            lines.append(f"共 {len(oos_results)} 道 OOS 题。预期：Recall@K=0，Faithfulness / Answer Relevancy 应该低。")
+            lines.append("")
+            lines.append("| Generation | Retrieval | Faithfulness | Answer Relevancy | Answer Correctness |")
+            lines.append("|---|---|---|---|---|")
+            oos_grouped = {}
+            for r in oos_results:
+                key = (r.generation_model or "-", r.retrieval_strategy or "-")
+                oos_grouped.setdefault(key, []).append(r.generation_scores or {})
+            for (gm, ret), scores_list in sorted(oos_grouped.items()):
+                f_vals = [s.get("faithfulness") for s in scores_list if s.get("faithfulness") is not None]
+                r_vals = [s.get("answer_relevancy") for s in scores_list if s.get("answer_relevancy") is not None]
+                c_vals = [s.get("answer_correctness") for s in scores_list if s.get("answer_correctness") is not None]
+                f_avg = sum(f_vals) / len(f_vals) if f_vals else 0.0
+                r_avg = sum(r_vals) / len(r_vals) if r_vals else 0.0
+                c_avg = sum(c_vals) / len(c_vals) if c_vals else 0.0
+                lines.append(f"| {gm} | {ret} | {f_avg:.3f} | {r_avg:.3f} | {c_avg:.3f} |")
+            lines.append("")
 
         # 错误汇总
         errors = [r for r in results if r.error_message]

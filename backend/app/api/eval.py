@@ -186,6 +186,7 @@ async def create_run(
         "enabled_metrics": enabled_metrics,    # 落库：保证后续报告可还原
         "llm_metric_model": llm_metric_model,  # 落库：保证续跑用同一模型
         "embedding_model": kb_embedding_model, # 落库：报告里显示用的 embedding
+        "eval_top_k": req.eval_top_k,          # 落库：保证续跑用同一 K
     }
     run = EvaluationRun(
         id=uuid.uuid4(),

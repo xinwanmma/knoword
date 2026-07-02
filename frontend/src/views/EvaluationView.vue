@@ -31,6 +31,13 @@
             </span>
           </el-form-item>
 
+          <el-form-item label="检索 Top K">
+            <el-input-number v-model="form.eval_top_k" :min="1" :max="50" />
+            <span style="margin-left: 10px; color: #999">
+              评估时 retrieval 召回的 top_k（默认 10）。K=5 容易撞天花板看不出策略差距，推荐 10-20
+            </span>
+          </el-form-item>
+
           <el-form-item label="并行度">
             <el-slider v-model="form.concurrency" :min="1" :max="8" show-stops :marks="concurrencyMarks" />
           </el-form-item>
@@ -288,6 +295,8 @@ const form = ref({
   dataset_id: null,
   // 评估用 QA 数量：null = 全部（取 dataset 所有 QA）；设值 = 取前 N 个
   qa_sample_size: null,
+  // 评估时 retrieval 召回的 top_k（默认 10，原来是硬编码 5）
+  eval_top_k: 10,
   concurrency: 4,
   retrieval_strategies: ['vector'],
   rerank_models: ['BAAI/bge-reranker-base'],
@@ -405,6 +414,8 @@ const startRun = async () => {
       dataset_id: form.value.dataset_id,
       // 评估用 QA 数量（null = 全部；传数字 = 取前 N 个）
       qa_sample_size: form.value.qa_sample_size || null,
+      // 评估时 retrieval 召回的 top_k
+      eval_top_k: form.value.eval_top_k,
       retrieval_strategies: form.value.retrieval_strategies,
       rerank_models: form.value.retrieval_strategies.includes('rerank') ? form.value.rerank_models : [],
       generation_models: form.value.generation_models,
@@ -530,6 +541,7 @@ const resetForm = () => {
     name: '',
     dataset_id: null,
     qa_sample_size: null,
+    eval_top_k: 10,
     concurrency: 4,
     retrieval_strategies: ['vector'],
     rerank_models: ['BAAI/bge-reranker-base'],

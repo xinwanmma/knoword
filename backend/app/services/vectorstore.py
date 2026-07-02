@@ -33,7 +33,8 @@ LEGACY_COLLECTION_NAME = "all_documents"
 # 新 collection 名前缀
 COLLECTION_PREFIX = "kb_emb_"
 # 默认 embedding model（None 时 fallback）
-DEFAULT_EMBEDDING_MODEL = "qwen3-embedding:0.6b"
+# 项目统一默认 8B：评估用 KB 默认都是 8B（8B 是 KB 锁定的 embedding）
+DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-8B"
 
 
 def get_chroma_client() -> chromadb.ClientAPI:

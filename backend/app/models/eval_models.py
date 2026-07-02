@@ -77,6 +77,9 @@ class EvaluationResult(Base):
     error_message = Column(Text)
     judge_error = Column(Boolean, default=False)
     ragas_error = Column(Boolean, default=False)  # RAGAS 评估失败标记
+    # P2 / P3 标识（从 qa_pairs 拷贝过来，避免报告时反查 dataset）
+    is_multihop = Column(Boolean, default=False)  # P2：必须综合 2+ chunk 才能答
+    is_out_of_scope = Column(Boolean, default=False)  # P3：KB 中无答案
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (

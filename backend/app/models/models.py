@@ -36,7 +36,7 @@ class KnowledgeBase(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # 策略配置（Phase 3 新增）
-    embedding_model = Column(String(100), default="qwen3-embedding:0.6b")
+    embedding_model = Column(String(100), default="Qwen/Qwen3-Embedding-8B")
     chunking_strategy = Column(String(50), default="recursive")
     chunk_size = Column(Integer, default=500)
     chunk_overlap = Column(Integer, default=50)
@@ -62,7 +62,7 @@ class Document(Base):
     error = Column(Text, nullable=True)
     # 文档实际用的 embedding model（上传时从 KB 继承）
     # 与 KB.embedding_model 一致；KB 改 embedding_model 时，文档不会自动跟随
-    embedding_model = Column(String(200), default="qwen3-embedding:0.6b")
+    embedding_model = Column(String(200), default="Qwen/Qwen3-Embedding-8B")
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")

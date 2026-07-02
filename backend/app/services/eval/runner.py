@@ -89,16 +89,18 @@ class EvalRunner:
                 select(EvaluationDataset).where(EvaluationDataset.id == run.dataset_id)
             )).scalar_one()
 
-        # 1.1 读 run.config：enabled_metrics / llm_metric_model
-        # 缺省 → 全 8 个 / settings.MIMO_MODEL；老 run 无此字段也走全开
+        # 1.1 读 run.config：enabled_metrics / llm_metric_model / eval_top_k
+        # 缺省 → 全 8 个 / settings.MIMO_MODEL / 10；老 run 无 eval_top_k 也走 10
         cfg = run.config or {}
         self._enabled_metrics = _normalize_enabled(cfg.get("enabled_metrics"))
         self._llm_metric_model = (
             cfg.get("llm_metric_model") or settings.MIMO_MODEL
         )
+        # eval_top_k：老 run 没字段 → 10（之前硬编码 5，提升到 10 减少天花板效应）
+        self._eval_top_k = int(cfg.get("eval_top_k") or 10)
         logger.info(
             f"EvalRun {self.run_id}: enabled_metrics={sorted(self._enabled_metrics)}, "
-            f"llm_metric_model={self._llm_metric_model}"
+            f"llm_metric_model={self._llm_metric_model}, eval_top_k={self._eval_top_k}"
         )
 
         # 1.5 读 dataset 绑定的 KB 的 embedding model（评估时强制使用 KB 上传文档时的 embedding）
@@ -170,6 +172,9 @@ class EvalRunner:
 
         tasks = []
         for qa_idx, qa in enumerate(qa_pairs):
+            # P2 / P3 标识从 qa_pairs 取
+            is_multihop = bool(qa.get("is_multihop", False))
+            is_oos = bool(qa.get("is_out_of_scope", False))
             for rt in retrievals:
                 if rt == "rerank" and rerank_models:
                     for rm in rerank_models:
@@ -184,6 +189,8 @@ class EvalRunner:
                                 "retrieval_strategy": rt,
                                 "rerank_model": rm,
                                 "generation_model": gm,
+                                "is_multihop": is_multihop,
+                                "is_out_of_scope": is_oos,
                             })
                 else:
                     for gm in generations:
@@ -197,6 +204,8 @@ class EvalRunner:
                             "retrieval_strategy": rt,
                             "rerank_model": None,
                             "generation_model": gm,
+                            "is_multihop": is_multihop,
+                            "is_out_of_scope": is_oos,
                         })
         return tasks
 
@@ -275,7 +284,7 @@ class EvalRunner:
         chunks = await strategy.retrieve(
             query=task["question"],
             kb_ids=kb_ids,
-            top_k=5,
+            top_k=self._eval_top_k,  # ← 从 config 读，老 run 走 10
             search_all=False,
         )
         retrieved_ids = [c.get("chunk_id", "") for c in chunks]
@@ -352,6 +361,9 @@ class EvalRunner:
             "generation_scores": llm_scores,
             "judge_error": judge_error,
             "latency_ms": latency,
+            # P2 / P3 标识
+            "is_multihop": bool(task.get("is_multihop", False)),
+            "is_out_of_scope": bool(task.get("is_out_of_scope", False)),
         }
 
     async def _save_result(self, result: dict):
@@ -378,6 +390,8 @@ class EvalRunner:
                 rerank_model=task.get("rerank_model"),
                 generation_model=task["generation_model"],
                 error_message=error[:1000],
+                is_multihop=bool(task.get("is_multihop", False)),
+                is_out_of_scope=bool(task.get("is_out_of_scope", False)),
             )
             db.add(row)
             await db.commit()

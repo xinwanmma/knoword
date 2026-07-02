@@ -35,6 +35,11 @@ class QAPair(BaseModel):
     ground_truth: str
     source_chunk_ids: list[str] = []
     source_doc_ids: list[int] = []
+    # P3：标识是否是 out-of-scope 题（KB 中无答案的题）
+    # 评估时：Recall@K 必然 = 0；Faithfulness / Answer Relevancy 应该低
+    is_out_of_scope: bool = False
+    # P2：标识是否是 multi-hop 题（必须综合 2+ chunk 才能答）
+    is_multihop: bool = False
 
 
 class DatasetCreate(BaseModel):
@@ -81,6 +86,9 @@ class EvalRunCreate(BaseModel):
     enabled_metrics: Optional[list[str]] = None
     # LLM 评估用的 judge 模型（None = settings.MIMO_MODEL）
     llm_metric_model: Optional[str] = None
+    # 评估时 retrieval 召回的 top_k（默认 10，原来是写死 5）
+    # 推荐 10-20：5 会让 NDCG/Recall 撞天花板，看不出 retrieval 策略差距
+    eval_top_k: int = Field(default=10, ge=1, le=50)
 
 
 class EvalRunProgress(BaseModel):
