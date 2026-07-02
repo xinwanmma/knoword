@@ -36,8 +36,9 @@ class EvaluationRun(Base):
     name = Column(String(200), nullable=False)
     # config 包含：embedding_models, retrieval_strategies, rerank_models, generation_models
     config = Column(JSONB, nullable=False)
-    # status: pending / running / stopped / completed / failed
-    status = Column(String(20), default="pending")
+    # status: pending / running / stopped / completed / completed_with_errors / failed
+    # 注：长度 30 避免 "completed_with_errors"(22字符) 超长导致 finalize 失败
+    status = Column(String(30), default="pending")
     progress = Column(Integer, default=0)  # 0-100
     total_tasks = Column(Integer, default=0)
     completed_tasks = Column(Integer, default=0)

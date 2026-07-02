@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from typing import List, Set
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.config import settings
 from app.db.database import async_session_factory
@@ -226,9 +227,18 @@ class EvalRunner:
         )
 
     async def _get_completed_task_keys(self) -> set[str]:
+        """返回"真正完成"的 task key 集合。
+
+        完成定义：DB 里有行 + 没有 judge_error。
+        judge_error=true 的 task 虽然有行，但 LLM judge 步骤没出结果，
+        需要在续跑时重跑（re-run 会重新做 retrieval + generation + judge）。
+        """
         async with async_session_factory() as db:
             result = await db.execute(
-                select(EvaluationResult).where(EvaluationResult.run_id == self.run_id)
+                select(EvaluationResult).where(
+                    EvaluationResult.run_id == self.run_id,
+                    EvaluationResult.judge_error.is_(False),
+                )
             )
             rows = result.scalars().all()
             return {self._task_key({
@@ -367,19 +377,32 @@ class EvalRunner:
         }
 
     async def _save_result(self, result: dict):
-        """每个 result 完成后立即 insert。"""
+        """每个 result 完成后立即 upsert。
+
+        续跑时如果 task 已存在（如 judge_error 任务重跑），用 ON CONFLICT 更新原行。
+        """
         async with async_session_factory() as db:
-            row = EvaluationResult(
+            stmt = pg_insert(EvaluationResult).values(
                 id=uuid.uuid4(),
                 run_id=self.run_id,
                 **result,
             )
-            db.add(row)
+            update_cols = {
+                c.name: stmt.excluded[c.name]
+                for c in EvaluationResult.__table__.columns
+                if c.name not in ("id", "run_id", "created_at")
+            }
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_eval_result",
+                set_=update_cols,
+            )
+            await db.execute(stmt)
             await db.commit()
 
     async def _save_error_result(self, task: dict, error: str):
+        """错误 task 也 upsert（续跑时覆盖旧行）。"""
         async with async_session_factory() as db:
-            row = EvaluationResult(
+            values = dict(
                 id=uuid.uuid4(),
                 run_id=self.run_id,
                 qa_index=task["qa_index"],
@@ -390,10 +413,21 @@ class EvalRunner:
                 rerank_model=task.get("rerank_model"),
                 generation_model=task["generation_model"],
                 error_message=error[:1000],
+                judge_error=True,
                 is_multihop=bool(task.get("is_multihop", False)),
                 is_out_of_scope=bool(task.get("is_out_of_scope", False)),
             )
-            db.add(row)
+            stmt = pg_insert(EvaluationResult).values(**values)
+            update_cols = {
+                c.name: stmt.excluded[c.name]
+                for c in EvaluationResult.__table__.columns
+                if c.name not in ("id", "run_id", "created_at")
+            }
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_eval_result",
+                set_=update_cols,
+            )
+            await db.execute(stmt)
             await db.commit()
         # 错误 task 也算"完成"（便于进度准确），但 progress 不算它
         await self._update_progress(is_error=True)

@@ -168,7 +168,7 @@
               <el-button v-if="row.status === 'running'" size="small" type="warning" @click="stopRun(row)">
                 停止
               </el-button>
-              <el-button v-if="['stopped','failed'].includes(row.status)" size="small" type="primary" @click="resumeRun(row)">
+              <el-button v-if="['stopped','failed','completed_with_errors'].includes(row.status)" size="small" type="primary" @click="resumeRun(row)">
                 续跑
               </el-button>
               <el-button v-if="row.status === 'completed'" size="small" @click="viewReport(row)">

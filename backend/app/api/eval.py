@@ -298,10 +298,10 @@ async def resume_run(
     run = result.scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="评估不存在")
-    if run.status not in ("stopped", "failed"):
+    if run.status not in ("stopped", "failed", "completed_with_errors"):
         raise HTTPException(
             status_code=400,
-            detail=f"仅 stopped / failed 状态可续跑，当前: {run.status}",
+            detail=f"仅 stopped / failed / completed_with_errors 状态可续跑，当前: {run.status}",
         )
 
     run.status = "running"
