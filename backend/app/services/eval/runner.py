@@ -110,8 +110,17 @@ class EvalRunner:
             f"EvalRun {self.run_id}: kb_id={kb_id} → embedding_model={kb_embedding_model}"
         )
 
-        # 2. 展开 task（按 (qa × retrieval × rerank × generation) 笛卡尔积）
-        all_tasks = self._expand_tasks(dataset.qa_pairs, run.config)
+        # 2. 评估用 QA 采样（None 或 > 数据集大小 = 全部；前 N 个顺序采样）
+        qa_pairs = dataset.qa_pairs or []
+        qa_sample_size = (run.config or {}).get("qa_sample_size")
+        if qa_sample_size and qa_sample_size < len(qa_pairs):
+            qa_pairs = qa_pairs[:qa_sample_size]
+            logger.info(
+                f"EvalRun {self.run_id}: 采样前 {len(qa_pairs)} / {len(dataset.qa_pairs)} QA"
+            )
+
+        # 3. 展开 task（按 (qa × retrieval × rerank × generation) 笛卡尔积）
+        all_tasks = self._expand_tasks(qa_pairs, run.config)
         async with async_session_factory() as db:
             run = (await db.execute(
                 select(EvaluationRun).where(EvaluationRun.id == self.run_id)

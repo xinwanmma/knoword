@@ -172,6 +172,7 @@ async def create_run(
         "rerank_models": req.rerank_models,
         "generation_models": req.generation_models,
         "concurrency": req.concurrency,
+        "qa_sample_size": req.qa_sample_size,  # 落库：保证续跑用同一采样
         "enabled_metrics": enabled_metrics,    # 落库：保证后续报告可还原
         "llm_metric_model": llm_metric_model,  # 落库：保证续跑用同一模型
     }

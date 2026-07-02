@@ -24,9 +24,11 @@
             </div>
           </el-form-item>
 
-          <el-form-item label="QA 数量">
-            <el-input-number v-model="form.qa_count" :min="1" :max="200" />
-            <span style="margin-left: 10px; color: #999">默认 20</span>
+          <el-form-item label="评估用 QA 数量">
+            <el-input-number v-model="form.qa_sample_size" :min="1" :max="500" />
+            <span style="margin-left: 10px; color: #999">
+              留空或 &gt; 数据集大小 = 全部；从 dataset 中取前 N 个
+            </span>
           </el-form-item>
 
           <el-form-item label="并行度">
@@ -284,7 +286,8 @@ const llmMetricOptions = allMetricOptions.filter(m =>
 const form = ref({
   name: '',
   dataset_id: null,
-  qa_count: 20,
+  // 评估用 QA 数量：null = 全部（取 dataset 所有 QA）；设值 = 取前 N 个
+  qa_sample_size: null,
   concurrency: 4,
   retrieval_strategies: ['vector'],
   rerank_models: ['BAAI/bge-reranker-base'],
@@ -400,6 +403,8 @@ const startRun = async () => {
     await evalAPI.createRun({
       name: form.value.name,
       dataset_id: form.value.dataset_id,
+      // 评估用 QA 数量（null = 全部；传数字 = 取前 N 个）
+      qa_sample_size: form.value.qa_sample_size || null,
       retrieval_strategies: form.value.retrieval_strategies,
       rerank_models: form.value.retrieval_strategies.includes('rerank') ? form.value.rerank_models : [],
       generation_models: form.value.generation_models,
@@ -524,7 +529,7 @@ const resetForm = () => {
   form.value = {
     name: '',
     dataset_id: null,
-    qa_count: 20,
+    qa_sample_size: null,
     concurrency: 4,
     retrieval_strategies: ['vector'],
     rerank_models: ['BAAI/bge-reranker-base'],

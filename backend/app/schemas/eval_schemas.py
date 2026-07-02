@@ -73,6 +73,9 @@ class EvalRunCreate(BaseModel):
     generation_models: list[str] = Field(default_factory=list)
     # 默认参数
     concurrency: int = 4
+    # 评估时从 dataset.qa_pairs 取前 N 个 QA（顺序采样；None 或 > 数据集大小 = 全部）
+    # 用于"我想先跑 10 题看看效果"，不用全跑
+    qa_sample_size: int | None = Field(default=None, ge=1)
     # 启用的评估指标（None = 全开 8 个）
     # 合法值见 EVAL_METRIC_KEYS
     enabled_metrics: Optional[list[str]] = None

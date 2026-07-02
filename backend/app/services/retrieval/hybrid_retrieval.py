@@ -172,16 +172,20 @@ class HybridRetrieval(RetrievalStrategy):
 
     def _retrieve_bm25(
         self, query: str, kb_ids: List[int], top_n: int, search_all: bool,
+        embedding_model: str | None = None,
     ) -> List[Dict[str, Any]]:
         """BM25 召回 top_n 个候选。返回 [{chunk_id, ..., bm25_score}, ...]"""
         import jieba
+        # 关键：把 embedding_model 传给 _load_bm25_index，让 BM25 索引构建路由到正确 collection
+        # 之前 bug：没传 → fallback DEFAULT_EMBEDDING_MODEL (0.6b) → 拉错 collection 的 chunks
+        em = embedding_model or (self._embedder.model_name if self._embedder else None)
         target_kbs = kb_ids if not search_all else list(self._indices.keys())
         if not target_kbs:
             return []
 
         all_scores: list[tuple[float, dict]] = []
         for kb_id in target_kbs:
-            chunks, index = self._load_bm25_index(kb_id)
+            chunks, index = self._load_bm25_index(kb_id, embedding_model=em)
             if not chunks or index is None:
                 continue
             tokenized_query = list(jieba.cut(query))
@@ -211,8 +215,10 @@ class HybridRetrieval(RetrievalStrategy):
         vec_chunks = await self._retrieve_vector(
             query, kb_ids, self._top_n_vec, search_all,
         )
+        # 关键：把 embedder 的 model_name 传给 BM25，让 BM25 索引走同 embedding 的 collection
+        em = self._embedder.model_name if self._embedder else None
         bm25_chunks = self._retrieve_bm25(
-            query, kb_ids, self._top_n_bm25, search_all,
+            query, kb_ids, self._top_n_bm25, search_all, embedding_model=em,
         )
 
         if not vec_chunks and not bm25_chunks:
